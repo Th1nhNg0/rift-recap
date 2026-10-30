@@ -73,6 +73,17 @@ fn report_card_renders_every_block() {
 }
 
 #[test]
+fn monthly_report_adds_an_mvp_band() {
+    let art = Assets::default();
+    let players = vec![line("Climber", 40, 24, Some(64)), line("Dropper", 30, 12, Some(-41))];
+    let weekly = Report { period: Period::Weekly, start: 1_700_000_000, end: 1_700_600_000, timezone: "UTC".into(), matches: 12, partial_lp: false, players };
+    let monthly = Report { period: Period::Monthly, ..weekly.clone() };
+    let image = |report: &Report| { let bytes = report_card::card(report, Lang::En, &art).expect("report card"); assert_webp(&bytes); webp::Decoder::new(&bytes).decode().expect("valid WebP").height() };
+    assert_eq!(image(&monthly), image(&weekly) + 2 * 96, "the monthly card grows by the 96 px MVP band");
+}
+
+
+#[test]
 fn header_pattern_preserves_clipped_pixels() {
     let art = memory_art(crate::render_assets::Wanted { champions: ["Ahri".into()].into(), splash: Some("Ahri".into()), ..Default::default() });
     for data in [art.image("champion:Ahri").unwrap(), art.image("splash:Ahri").unwrap()] {

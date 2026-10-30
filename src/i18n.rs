@@ -249,6 +249,8 @@ catalog! {
     ReportRangeFormat: "%d/%m/%Y", "%d %b %Y";
     MatchesCount: "{} trận", "{} matches";
     GroupLp: "TỔNG LP NHÓM", "GROUP LP";
+    MvpMonth: "MVP tháng {}", "MVP of {}";
+    MvpLine: "{} điểm · {} trận · {} thắng", "{} rating · {} games · {} wins";
     HonoursSection: "Danh hiệu", "Honours";
     AwKills: "Hạ gục nhiều nhất", "Most kills";
     AwDeaths: "Chết nhiều nhất", "Most deaths";

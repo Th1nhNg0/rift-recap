@@ -73,3 +73,53 @@ fn streamed_reports_match_materialized_windows() {
     }
     assert!(reports::build_at(&app, Period::Daily, end - 90 * 86400).unwrap().is_none());
 }
+
+fn sample(name: &str, games: i64, wins: i64, kills: i64, deaths: i64, assists: i64, damage: i64, cs: i64, vision: i64) -> crate::reports::PlayerLine {
+    crate::reports::PlayerLine { name: name.into(), games, wins, kills, deaths, assists, damage, cs, vision, minutes: games as f64 * 30.0, ..Default::default() }
+}
+fn report_of(period: Period, players: Vec<crate::reports::PlayerLine>) -> crate::reports::Report {
+    crate::reports::Report { period, start: 1_711_670_400, end: 1_711_929_599, timezone: "UTC".into(), matches: 1, players, partial_lp: false }
+}
+
+#[test]
+fn mvp_is_a_monthly_award() {
+    let players = vec![sample("Solo", 20, 12, 120, 60, 160, 500_000, 5_000, 400)];
+    assert!(report_of(Period::Monthly, players.clone()).mvp().is_some());
+    assert!(report_of(Period::Weekly, players.clone()).mvp().is_none());
+    assert!(report_of(Period::Daily, players).mvp().is_none());
+}
+
+#[test]
+fn mvp_rating_is_relative_and_normalised() {
+    // Identical players: every ratio is 1.0 before scaling, so every rating is exactly 1.00.
+    let alpha = sample("Alpha", 40, 20, 200, 100, 300, 800_000, 12_000, 600);
+    let twins = report_of(Period::Monthly, vec![alpha.clone(), alpha.clone()]);
+    let ratings = twins.mvp_ratings();
+    assert_eq!(ratings.len(), 2);
+    assert!(ratings.iter().all(|(_, rating)| (rating - 1.0).abs() < 1e-9));
+    assert_eq!(twins.mvp().unwrap().player, 0, "an exact tie goes to the earlier name");
+    // The same line at 1.5x volume keeps every per-game ratio, so games break the tie.
+    let busier = sample("Bravo", 60, 30, 300, 150, 450, 1_200_000, 18_000, 900);
+    assert_eq!(report_of(Period::Monthly, vec![alpha.clone(), busier]).mvp().unwrap().player, 1);
+    // Double output on every metric: the MVP climbs above 1.00 and the other player drops below it.
+    let carry = sample("Carry", 40, 20, 400, 100, 600, 1_600_000, 24_000, 1_200);
+    let lopsided = report_of(Period::Monthly, vec![alpha, carry]);
+    let mvp = lopsided.mvp().unwrap();
+    assert_eq!(mvp.player, 1);
+    assert!(mvp.rating > 1.0 && mvp.rating < 2.0, "rating {}", mvp.rating);
+    assert!(lopsided.mvp_ratings().iter().any(|(index, rating)| *index == 0 && *rating < 1.0));
+}
+
+#[test]
+fn mvp_requires_a_real_sample() {
+    let regular = sample("Regular", 100, 50, 500, 500, 500, 1_500_000, 15_000, 1_000);
+    let perfect = sample("Perfect", 19, 19, 380, 19, 380, 1_900_000, 19_000, 1_900);
+    let grinder = sample("Grinder", 21, 10, 105, 126, 126, 315_000, 3_150, 210);
+    let report = report_of(Period::Monthly, vec![regular, perfect, grinder]);
+    let eligible: Vec<usize> = report.mvp_ratings().iter().map(|(index, _)| *index).collect();
+    assert_eq!(eligible, vec![0, 2], "19 games is under a fifth of the busiest player's 100");
+    // The floor is ten games even when the 20% share rule would allow fewer.
+    let quiet = report_of(Period::Monthly, vec![sample("Quiet", 12, 6, 60, 60, 60, 180_000, 1_800, 120), sample("Rookie", 9, 9, 180, 9, 180, 900_000, 9_000, 900)]);
+    assert_eq!(quiet.mvp_ratings().len(), 1);
+    assert_eq!(quiet.mvp().unwrap().player, 0);
+}

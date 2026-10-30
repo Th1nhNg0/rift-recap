@@ -1,12 +1,13 @@
 //! Daily/weekly/monthly report card in the scoreboard's style: a splash-art header with the group's LP,
-//! honours, then a block of players who climbed and one of players who dropped.
+//! the monthly MVP, honours, then a block of players who climbed and one of players who dropped.
 use crate::{App, i18n::{Lang, Msg}, render::{Canvas, blocking, number, rasterize, short, tier_color}, render_assets::{Assets, Wanted},
-    reports::{PlayerLine, Report}, theme::{BG, BLUE, CREAM, GOLD, GOLD_DIM, PANEL, PANEL_DARK, RED, ROW_A, ROW_B, RULE, SOFT, TEAL}};
+    reports::{Mvp, PlayerLine, Report}, theme::{BG, BLUE, CREAM, GOLD, GOLD_DIM, PANEL, PANEL_DARK, RED, ROW_A, ROW_B, RULE, SOFT, TEAL}};
 use anyhow::{Result, ensure};
 use std::{fmt::Write, path::Path};
 
 const W: u32 = 1200;
 const HERO: f32 = 150.0;
+const MVP_H: f32 = 96.0;
 const HEAD_H: f32 = 42.0;
 const SUB_H: f32 = 20.0;
 const ROW: f32 = 54.0;
@@ -45,19 +46,24 @@ pub async fn image(app: &App, report: Report, lang: Lang) -> Result<Vec<u8>> {
 pub fn card(report: &Report, lang: Lang, art: &Assets) -> Result<Vec<u8>> {
     ensure!(!report.players.is_empty() && report.players.len() <= 100, "Unsupported report size");
     let awards = report.awards(lang);
+    let mvp = report.mvp();
     let climbed: Vec<&PlayerLine> = report.players.iter().filter(|p| p.lp().is_some_and(|d| d >= 0)).collect();
     // Players arrive sorted by LP, highest first, so the smallest drop leads its block.
     let dropped: Vec<&PlayerLine> = report.players.iter().filter(|p| p.lp().is_some_and(|d| d < 0)).collect();
     let unknown: Vec<&PlayerLine> = report.players.iter().filter(|p| p.lp().is_none()).collect();
     let blocks = [(lang.t(Msg::BlockClimbed), GAIN, climbed), (lang.t(Msg::BlockDropped), LOSS, dropped), (lang.t(Msg::BlockUnknown), NEUTRAL, unknown)];
     let honours_h = if awards.is_empty() { 0.0 } else { HEAD_H + 2.0 * TILE_H };
-    let height = HERO + honours_h + blocks.iter().filter(|(_, _, rows)| !rows.is_empty()).map(|(_, _, rows)| HEAD_H + SUB_H + ROW * rows.len() as f32 + 6.0).sum::<f32>() + 8.0;
+    let height = HERO + honours_h + if mvp.is_some() { MVP_H } else { 0.0 } + blocks.iter().filter(|(_, _, rows)| !rows.is_empty()).map(|(_, _, rows)| HEAD_H + SUB_H + ROW * rows.len() as f32 + 6.0).sum::<f32>() + 8.0;
     ensure!(height <= 8000.0, "Report exceeds image bounds");
     let mut cv = Canvas { svg: format!("<svg xmlns='http://www.w3.org/2000/svg' width='{W}' height='{height}'><g font-family='Be Vietnam Pro,DejaVu Sans,sans-serif'>"), clips: 0 };
     let backdrop = cv.gradient(&[(0.0, "#0a1a28", 1.0), (0.5, BG, 1.0), (1.0, "#0a1420", 1.0)], (0.0, 0.0, 0.0, 1.0));
     cv.block(0.0, 0.0, W as f32, height, 0.0, &backdrop, "");
     header(&mut cv, report, lang, art);
     let mut y = HERO;
+    if let Some(mvp) = mvp {
+        mvp_band(&mut cv, y, report, &mvp, lang, art);
+        y += MVP_H;
+    }
     if !awards.is_empty() {
         cv.block(0.0, y, W as f32, HEAD_H, 0.0, PANEL, "");
         cv.hairline(0.0, W as f32, y, 0.6);
@@ -150,6 +156,30 @@ fn row(cv: &mut Canvas, p: &PlayerLine, y: f32, index: usize, lang: Lang, art: &
     }
 }
 
+/// Gold band between the hero and the honours: the monthly MVP and the champion behind it.
+fn mvp_band(cv: &mut Canvas, y: f32, report: &Report, mvp: &Mvp, lang: Lang, art: &Assets) {
+    let player = &report.players[mvp.player];
+    let backdrop = cv.gradient(&[(0.0, "#241d12", 1.0), (0.42, "#2a2416", 1.0), (0.76, "#151d26", 1.0), (1.0, "#0b1621", 1.0)], (0.0, 0.0, 1.0, 0.0));
+    cv.block(0.0, y, W as f32, MVP_H, 0.0, &backdrop, "");
+    crown(cv, 34.0, y + 30.0, 20.0, GOLD);
+    cv.label(79.0, y + 31.5, 11.5, GOLD, 700, "start", 2.6, &lang.f(Msg::MvpMonth, &[&report.month(lang)]).to_uppercase());
+    cv.label(79.0, y + 64.0, 28.0, CREAM, 700, "start", 0.0, &short(&player.name, 30));
+    let rating = format!("{:.2}", mvp.rating);
+    cv.label(79.0, y + 84.0, 13.5, SOFT, 400, "start", 0.0, &lang.f(Msg::MvpLine, &[&rating, &player.games, &player.wins]));
+    let (size, x) = (68.0, 1098.0);
+    let top = y + (MVP_H - size) / 2.0;
+    cv.picture(portrait(art, player), x, top, size, size, 0.0, "xMidYMid slice");
+    cv.frame(x, top, size, size, GOLD);
+    cv.block(0.0, y + MVP_H - 1.0, W as f32, 1.0, 0.0, GOLD, "fill-opacity='.6'");
+}
+
+/// Three-point crown drawn as one path so it stays sharp at any size.
+fn crown(cv: &mut Canvas, x: f32, y: f32, h: f32, ink: &str) {
+    let (w, base, shoulder, valley) = (h * 1.08, y + h, y + h * 0.4, y + h * 0.78);
+    let _ = write!(cv.svg, "<path d='M{x} {base} L{x} {shoulder} L{} {valley} L{} {y} L{} {valley} L{} {shoulder} L{} {base} Z' fill='{ink}'/>",
+        x + w * 0.25, x + w * 0.5, x + w * 0.75, x + w, x + w);
+}
+
 fn header(cv: &mut Canvas, report: &Report, lang: Lang, art: &Assets) {
     let net = report.net_lp();
     let ink = net.map_or(SOFT, |n| if n >= 0 { TEAL } else { "#ff7b8f" });
@@ -164,10 +194,11 @@ fn header(cv: &mut Canvas, report: &Report, lang: Lang, art: &Assets) {
     cv.block(0.0, 0.0, W as f32, HERO, 0.0, &sides, "");
     let floor = cv.gradient(&[(0.0, BG, 0.0), (0.7, BG, 0.0), (1.0, BG, 1.0)], (0.0, 0.0, 0.0, 1.0));
     cv.block(0.0, 0.0, W as f32, HERO, 0.0, &floor, "");
-    let title = short(&report.title(lang).to_uppercase(), 28);
+    let title = report.title(lang).to_uppercase();
     let gold = cv.gradient(&[(0.0, "#f9e7b0", 1.0), (0.5, GOLD, 1.0), (1.0, "#8c6a2e", 1.0)], (0.0, 0.0, 0.0, 1.0));
     // Long titles (a month with its year) shrink so they stay clear of the splash art.
     let size = if title.chars().count() > 16 { 38.0 } else { 46.0 };
+    let title = short(&title, if size < 40.0 { 34 } else { 28 });
     let _ = write!(cv.svg, "<text x='34' y='94' font-size='{size}' font-weight='700' fill='#000' fill-opacity='.45' letter-spacing='3' transform='translate(2 3)'>{}</text>", crate::render::escape(&title));
     cv.label(34.0, 94.0, size, &gold, 700, "start", 3.0, &title);
     let sub = format!("{}  ·  {}", report.range(lang), lang.f(Msg::MatchesCount, &[&report.matches]));

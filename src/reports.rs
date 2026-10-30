@@ -69,6 +69,13 @@ pub struct PlayerLine {
 pub struct RankLine { pub queue: u16, pub games: i64, pub wins: i64, pub delta: Option<i64>, pub rank: Option<Rank> }
 pub struct Award { pub title: Msg, pub player: usize, pub value: String, pub negative: bool }
 
+/// Monthly MVP: the highest group-relative rating among players with a real sample.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Mvp { pub player: usize, pub rating: f64 }
+/// A player needs this many games, and at least a fifth of the busiest player's games, to be MVP.
+const MVP_MIN_GAMES: i64 = 10;
+const MVP_SHARE: i64 = 5;
+
 impl PlayerLine {
     /// Sum of known per-queue LP changes; `None` when no change is known.
     pub fn lp(&self) -> Option<i64> { self.ranks.iter().filter_map(|r| r.delta).reduce(|a, b| a + b) }
@@ -83,7 +90,7 @@ impl Report {
         match self.period {
             Period::Daily => lang.t(Msg::DailyReport).into(),
             Period::Weekly => lang.t(Msg::WeeklyReport).into(),
-            Period::Monthly => lang.f(Msg::MonthlyReport, &[&self.local(self.end).format(lang.t(Msg::MonthFormat))]),
+            Period::Monthly => lang.f(Msg::MonthlyReport, &[&self.month(lang)]),
         }
     }
     pub fn range(&self, lang: Lang) -> String {
@@ -125,8 +132,45 @@ impl Report {
             Some(Award { title, player: index, value, negative })
         }).collect()
     }
+    /// The report's month, in the language's month format.
+    pub fn month(&self, lang: Lang) -> String { self.local(self.end).format(lang.t(Msg::MonthFormat)).to_string() }
+    /// Rating of every eligible player, normalised so the eligible group averages 1.00: each of
+    /// win rate, KDA, damage per game, CS per minute and vision per minute is divided by the group
+    /// average, the ratios are averaged, and the result is scaled by the group's mean.
+    pub fn mvp_ratings(&self) -> Vec<(usize, f64)> {
+        if self.period != Period::Monthly { return Vec::new(); }
+        let busiest = self.players.iter().map(|p| p.games).max().unwrap_or(0);
+        let eligible: Vec<usize> = self.players.iter().enumerate()
+            .filter(|(_, p)| p.games >= MVP_MIN_GAMES && p.games * MVP_SHARE >= busiest)
+            .map(|(index, _)| index).collect();
+        if eligible.is_empty() { return Vec::new(); }
+        type Metric = fn(&PlayerLine) -> f64;
+        let metrics: [Metric; 5] = [PlayerLine::win_rate, PlayerLine::kda, PlayerLine::damage_per_game, PlayerLine::cs_per_min, PlayerLine::vision_per_min];
+        let means: Vec<f64> = metrics.iter().map(|metric| eligible.iter().map(|&i| metric(&self.players[i])).sum::<f64>() / eligible.len() as f64).collect();
+        let raw = |p: &PlayerLine| {
+            let (total, count) = metrics.iter().zip(&means).filter(|(_, mean)| **mean > 0.0)
+                .fold((0.0, 0), |(total, count), (metric, mean)| (total + metric(p) / mean, count + 1));
+            if count == 0 { 0.0 } else { total / f64::from(count) }
+        };
+        let average = eligible.iter().map(|&i| raw(&self.players[i])).sum::<f64>() / eligible.len() as f64;
+        let scale = if average > 0.0 { 1.0 / average } else { 1.0 };
+        eligible.into_iter().map(|i| (i, raw(&self.players[i]) * scale)).collect()
+    }
+    /// The monthly MVP, if anyone played enough. Ties go to more games, then the earlier name.
+    pub fn mvp(&self) -> Option<Mvp> {
+        self.mvp_ratings().into_iter().max_by(|a, b| a.1.total_cmp(&b.1)
+            .then_with(|| self.players[a.0].games.cmp(&self.players[b.0].games))
+            .then_with(|| self.players[b.0].name.cmp(&self.players[a.0].name))
+            .then_with(|| b.0.cmp(&a.0)))
+            .map(|(player, rating)| Mvp { player, rating })
+    }
     pub fn text(&self, lang: Lang) -> String {
         let mut out = format!("{}\n{} ({})\n{}\n", self.title(lang), self.range(lang), self.timezone, lang.f(Msg::DistinctMatches, &[&self.matches]));
+        if let Some(mvp) = self.mvp() {
+            let p = &self.players[mvp.player];
+            let rating = format!("{:.2}", mvp.rating);
+            let _ = writeln!(out, "{}: {} · {}", lang.f(Msg::MvpMonth, &[&self.month(lang)]), plain(&p.name), lang.f(Msg::MvpLine, &[&rating, &p.games, &p.wins]));
+        }
         let awards = self.awards(lang);
         if !awards.is_empty() {
             let _ = writeln!(out, "\n{}", lang.t(Msg::HonoursSection));
