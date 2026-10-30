@@ -157,9 +157,9 @@ The daily report posts on ordinary days, the weekly one on Sundays, and the mont
 
 ### Monthly race video
 
-<a href="docs/race-2026-10.mp4"><img src="docs/race-2026-10.webp" alt="Monthly LP race video, October 2026" width="860"></a>
+<a href="docs/race-2026-10.mp4"><img src="docs/race-2026-10.webp" alt="Monthly LP race video with an anonymised sample roster" width="860"></a>
 
-Click the poster for the 60-second October 2026 clip (1280×720 MP4).
+Click the poster for the 60-second clip (960×540 MP4, English, anonymised sample roster). The bot renders the same chart at 1280×720.
 
 On the last day of the month the bot can also post a **60-second 720p LP race video** after the card: the month's LP drawn as a line race, with the highs and lows called out. It is on by default (`reports.video = true`) and needs `ffmpeg` on the host; the Docker image ships it. Rendering happens in the background (~9 s at 720p on a modern CPU) and never blocks the card or the scoreboards.
 
