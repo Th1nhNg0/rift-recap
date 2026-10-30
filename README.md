@@ -9,10 +9,18 @@ A scoreboard the moment each game ends, LP changes for everyone, funny AI commen
 
 [![Rust](https://img.shields.io/badge/Rust-2024-orange?logo=rust)](https://www.rust-lang.org/)
 [![Docker](https://img.shields.io/badge/Docker-31%20MB-2496ED?logo=docker&logoColor=white)](#docker)
+[![CI](https://github.com/Th1nhNg0/rift-recap/actions/workflows/ci.yml/badge.svg)](https://github.com/Th1nhNg0/rift-recap/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/Th1nhNg0/rift-recap?include_prereleases)](https://github.com/Th1nhNg0/rift-recap/releases)
 
 </div>
+
+## Contents
+
+- [Why](#why) · [Features](#features) · [Screenshots](#screenshots) · [Quick start](#quick-start)
+- [Slash commands](#slash-commands) · [Reports](#reports) · [Configuration](#configuration) · [AI commentary](#ai-commentary)
+- [Run it as a service](#run-it-as-a-service) · [How it works](#how-it-works) · [FAQ](#faq)
+- [Development](#development) · [Contributing](#contributing) · [Legal](#legal)
 
 ## Why
 
@@ -28,7 +36,7 @@ You and your friends grind ranked together, then argue about who carried and who
 
 - **Post-game scoreboard** – one image with splash art of the game's best tracked player, the result, the kill score and gold lead, then a table per team: KDA with kill participation, damage dealt and taken, gold, vision, CS, items, summoner spells and runes. Each team header shows its objectives (dragons, Baron, Herald, towers, inhibitors), average rank and total damage. Images are drawn at 2x and sent as lossy WebP, a few hundred KB each.
 - **LP and rank per game** – Solo/Duo and Flex, with the LP gained or lost beside each tracked player and the rank of all ten players. `MVP`, `ACE` and `WORST` labels sit on the portraits.
-- **Daily, weekly and monthly reports** – a splash-art header with the group's LP, then players who climbed and players who dropped in two blocks, each with record, KDA, damage, CS, vision and an LP-change bar. Weekly and monthly cards add six honours (kills, deaths, damage, farm, vision, win rate).
+- **Daily, weekly and monthly reports** – a splash-art header with the group's LP, then players who climbed and players who dropped in two blocks, each with record, KDA, damage, CS, vision and an LP-change bar. Weekly and monthly cards add six honours (kills, deaths, damage, farm, vision, win rate), and monthly cards crown an **MVP of the month** with the champion behind it.
 - **Optional AI commentary** – a short, funny line per tracked player with a title and emoji, written by any OpenAI-compatible model in the voice *you* define in a `prompt.md`. Custom Discord emojis are supported.
 - **Slash commands** – `/lastgame`, `/rank`, `/players`, `/version` and admin `/config` for channels, roster and on-demand reports.
 - **English and Vietnamese** – messages, images and slash-command descriptions.
@@ -42,7 +50,7 @@ You and your friends grind ranked together, then argue about who carried and who
 <td width="50%"><b>Weekly report</b><br><img src="docs/images/report-weekly-en.webp" alt="Weekly report"></td>
 </tr>
 <tr>
-<td colspan="2"><b>Monthly report</b> (same layout as weekly, over the calendar month)<br><img src="docs/images/report-monthly-en.webp" alt="Monthly report" width="50%"></td>
+<td colspan="2"><b>Monthly report</b> (the weekly layout plus an MVP of the month, over the calendar month)<br><img src="docs/images/report-monthly-en.webp" alt="Monthly report" width="50%"></td>
 </tr>
 </table>
 
@@ -93,7 +101,7 @@ Download the static Linux binary from the [latest release](https://github.com/Th
 
 ```sh
 git clone https://github.com/Th1nhNg0/rift-recap.git && cd rift-recap
-cargo build --release --locked        # Rust 2024 edition and a C compiler for the bundled SQLite
+cargo build --release --locked        # Rust 1.85+ (2024 edition) and a C compiler for the bundled SQLite
 
 umask 077
 mkdir -p ~/.config/rift-recap
@@ -142,7 +150,17 @@ New players are baselined silently the first time they are seen, so the bot neve
 | `/config removeplayer` | Stop tracking an account (with autocomplete) | Administrator |
 | `/config rankreport` | Post a daily, weekly or monthly report now | Manage Server |
 
-Reports are posted automatically once a day at `reports.hour:minute` (default 23:59, `Asia/Ho_Chi_Minh`): the daily report on most days, the weekly one on Sundays, the monthly one on the last day of the month.
+## Reports
+
+The daily report posts on ordinary days, the weekly one on Sundays, and the monthly one on the last day of the month, with the weekly one too when that day is a Sunday. They follow `reports.hour:minute` (default 23:59 in `reports.timezone`) and go to the channel set with `/config rankchannel`; `/config rankreport` posts one on demand. Each report is sent as an image, with its text version as a fallback.
+
+### MVP of the month
+
+<img src="docs/images/report-mvp-band-en.webp" alt="MVP of the month band: Mochi, MVP of October 2026, 1.12 rating, 54 games and 36 wins" width="860">
+
+The monthly card crowns an MVP above the honours: the player with the highest **rating** over the calendar month, shown with the champion they played most. The rating is the average of five stats, each divided by the group average, then scaled so the eligible squad averages **1.00** — win rate, KDA, damage per game, CS per minute and vision per minute. A 1.12 rating therefore reads as 12% above the group on that mix, and because every number is relative, the scale needs no hand-tuned constants and works for any region or roster size.
+
+Only players with at least **10 games** and at least a fifth of the busiest player's games qualify, so a short lucky streak cannot take the month. Ties go to the player with more games, then to the earlier name, and the MVP also leads the report's text form. Requesting a monthly report before the month ends ranks the month so far.
 
 ## Configuration
 
@@ -174,11 +192,12 @@ Off by default; the bot works fully without it. To enable it, point it at any Op
 ```toml
 [llm]
 enabled = true
-model = "gpt-4o-mini"
-base_url = "https://api.openai.com/v1"      # OpenRouter, Ollama (http://localhost:11434/v1), a local gateway...
+provider = "openrouter"                     # label only; every endpoint speaks OpenAI's format
+model = "openai/gpt-4o-mini"
+base_url = "https://openrouter.ai/api/v1"   # OpenAI, Ollama (http://localhost:11434/v1), a local gateway...
 prompt_file = "prompt.md"                   # optional persona and style
 send_names = false                          # true lets the prompt use inside jokes about your friends
-timeout_secs = 90
+timeout_secs = 15                           # seconds; raise it for slow local models
 ```
 
 - Put `LLM_API_KEY` in `.env` (not needed for a server on `localhost`).
@@ -237,6 +256,8 @@ The tracker polls match history for your roster, stores every new game together 
 
 **Do I need the AI part?** No. It is off by default and the bot is fully useful without it.
 
+**How is the MVP of the month picked?** The best average of win rate, KDA, damage per game, CS per minute and vision per minute, each relative to the squad's own average and scaled so the eligible group averages 1.00. A player needs at least 10 games and a fifth of the busiest player's games. Details in [MVP of the month](#mvp-of-the-month).
+
 **How much does it cost to run?** Next to nothing: about 20 requests per minute to Riot, a few MB of disk, and a 1 vCPU, 256 MB machine is plenty.
 
 **Why a bot and not a web page?** Your squad is already in Discord. Results show up where you talk, with nothing to open.
@@ -245,11 +266,13 @@ The tracker polls match history for your roster, stores every new game together 
 
 ```sh
 cargo build --locked
+cargo test --locked                       # offline; layouts are smoke-tested
 ./target/debug/rift-recap --env-file .env render-scoreboard --language all --output data/board.webp
 ./target/debug/rift-recap --env-file .env render-report --period weekly --language all --output data/report.webp
+./target/debug/rift-recap --env-file .env render-report --period monthly --language all --output data/report.webp
 ```
 
-`render-scoreboard` draws a stored or recent real match to a WebP (add `--post` to send one image to the games channel). `render-report` does the same for a report and prints its text form. Neither imports matches, touches baselines or calls an LLM.
+`render-scoreboard` draws a stored or recent real match to a WebP (add `--post` to also send it to the games channel). `render-report` writes `<stem>-<period>.webp` and a matching `.txt` for a daily, weekly or monthly report — the monthly one includes the MVP band — and `--language all` writes one pair per language. Neither imports matches, touches baselines or calls an LLM.
 
 | Path | Role |
 |---|---|
@@ -257,8 +280,10 @@ cargo build --locked
 | `src/riot.rs` | Rate-limited Riot client |
 | `src/store.rs` | SQLite storage and the delivery outbox |
 | `src/discord.rs` | Gateway, slash commands, delivery and commentary workers |
-| `src/render.rs`, `src/report_card.rs`, `src/render_assets.rs` | SVG images rasterised by `resvg`; Data Dragon and objective artwork cache |
-| `src/reports.rs`, `src/presentation.rs` | Report aggregation and the role-aware MVP / worst-player score |
+| `src/render.rs`, `src/render_assets.rs` | SVG canvas and rasterisation; Data Dragon artwork cache |
+| `src/scoreboard.rs`, `src/report_card.rs` | Scoreboard and report card layouts |
+| `src/reports.rs` | Report aggregation and the monthly MVP rating |
+| `src/presentation.rs` | Per-match badges, featured player and standout scoring |
 | `src/llm.rs` | Optional commentary client |
 | `src/i18n.rs` | Compile-checked English and Vietnamese catalogue |
 
