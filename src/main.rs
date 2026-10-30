@@ -4,6 +4,7 @@ mod i18n;
 mod llm;
 mod model;
 mod presentation;
+mod race_video;
 mod reports;
 mod render_assets;
 #[cfg(test)]
@@ -70,6 +71,14 @@ enum Mode {
         /// Upper bound on matches fetched from Riot for a preview without stored matches.
         #[arg(long, default_value_t = 15)]
         max_matches: usize,
+    },
+    /// Render this month's LP race video (1280x720, 30 fps, 60 s) with resvg + ffmpeg.
+    RenderRace {
+        #[arg(long, default_value = "data/race.mp4")]
+        output: PathBuf,
+        /// vi, en, or all (one file per language, suffixed -vi/-en). Defaults to the configured language.
+        #[arg(long)]
+        language: Option<String>,
     },
     /// Print the exact JSON the LLM receives for one match (a stored one, or the newest real match).
     /// Read-only: no LLM call, no network writes, useful for tuning `prompt.md`.
@@ -182,6 +191,21 @@ async fn execute() -> Result<()> {
                 std::fs::write(directory.join(format!("{stem}-{}{suffix}.{}", period.key(), render::IMAGE_EXT)), report_card::image(&app, report.clone(), lang).await?)?;
                 std::fs::write(directory.join(format!("{stem}-{}{suffix}.txt", period.key())), report.text(lang))?;
                 info!(period = period.key(), language = lang.code(), "Saved report card and text");
+            }
+            Ok(())
+        }
+        Mode::RenderRace { output, language } => {
+            let langs = languages(&app, language.as_deref())?;
+            let directory = output.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
+            std::fs::create_dir_all(directory)?;
+            let stem = output.file_stem().and_then(|s| s.to_str()).unwrap_or("race");
+            for &lang in &langs {
+                let suffix = if langs.len() > 1 { format!("-{}", lang.code()) } else { String::new() };
+                let path = directory.join(format!("{stem}{suffix}.mp4"));
+                let app = app.clone();
+                let target = path.clone();
+                tokio::task::spawn_blocking(move || race_video::render(&app, lang, &target)).await??;
+                info!(path = %path.display(), language = lang.code(), "Saved race video");
             }
             Ok(())
         }

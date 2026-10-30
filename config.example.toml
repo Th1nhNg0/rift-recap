@@ -22,6 +22,7 @@ rank_channel_id = 0 # Zero disables reports until configured.
 [reports]
 enabled = true
 monthly = true # Calendar-month report on the last day of each month.
+video = true   # Also post a 60 s 720p LP race video after the monthly card (needs ffmpeg).
 timezone = "Asia/Ho_Chi_Minh"
 hour = 23
 minute = 59

@@ -37,6 +37,8 @@ pub struct Reports {
     pub enabled: bool,
     /// Monthly report on the last day of each month.
     pub monthly: bool,
+    /// Render and post the monthly LP race video after the card (needs ffmpeg).
+    pub video: bool,
     pub timezone: String,
     pub hour: u32,
     pub minute: u32,
@@ -72,7 +74,7 @@ impl Default for Riot {
     }
 }
 impl Default for Reports {
-    fn default() -> Self { Self { enabled: true, monthly: true, timezone: "Asia/Ho_Chi_Minh".into(), hour: 23, minute: 59 } }
+    fn default() -> Self { Self { enabled: true, monthly: true, video: true, timezone: "Asia/Ho_Chi_Minh".into(), hour: 23, minute: 59 } }
 }
 impl Default for Llm {
     fn default() -> Self { Self { enabled: false, provider: "openrouter".into(), model: String::new(), base_url: "https://openrouter.ai/api/v1".into(), timeout_secs: 15, prompt_file: None, send_names: false } }

@@ -328,6 +328,18 @@ async fn deliver(app: &App, http: &Http, delivery: &crate::store::Delivery) -> R
             app.store.ack(delivery.id, None)?;
             app.store.ack(delivery.id, None)?;
         }
+        Notice::Race { path, caption } => {
+            let channel = app.channel(true)?; ensure!(channel != 0, "Rank channel missing");
+            match std::fs::read(path) {
+                Ok(bytes) => {
+                    let name = std::path::Path::new(path).file_name().and_then(|s| s.to_str()).unwrap_or("race.mp4").to_owned();
+                    let builder = CreateMessage::new().content(caption.as_str()).add_file(CreateAttachment::bytes(bytes, name));
+                    safe_http(ChannelId::new(channel).send_message(http, builder.allowed_mentions(mentions())).await)?;
+                }
+                Err(error) => warn!(%error, path, "Race video is gone; dropping the queued upload"),
+            }
+            app.store.ack(delivery.id, None)?;
+        }
     }
     Ok(())
 }

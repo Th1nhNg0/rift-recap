@@ -34,7 +34,7 @@ pub(crate) fn tier_color(tier: &str) -> &'static str {
 }
 
 /// Scanning system fonts is slow; build the font database once per process.
-fn fonts() -> Arc<fontdb::Database> {
+pub(crate) fn fonts() -> Arc<fontdb::Database> {
     static FONTS: OnceLock<Arc<fontdb::Database>> = OnceLock::new();
     FONTS.get_or_init(|| {
         let mut db = fontdb::Database::new();
@@ -46,6 +46,18 @@ fn fonts() -> Arc<fontdb::Database> {
         Arc::new(db)
     }).clone()
 }
+/// The embedded face pair only: the race video needs no system font fallback, and skipping the
+/// scan keeps its per-process memory and start-up cost down (the Docker image has no system fonts).
+pub(crate) fn embedded_fonts() -> Arc<fontdb::Database> {
+    static FONTS: OnceLock<Arc<fontdb::Database>> = OnceLock::new();
+    FONTS.get_or_init(|| {
+        let mut db = fontdb::Database::new();
+        db.load_font_source(fontdb::Source::Binary(Arc::new(&include_bytes!("../assets/fonts/BeVietnamPro-Regular.ttf")[..])));
+        db.load_font_source(fontdb::Source::Binary(Arc::new(&include_bytes!("../assets/fonts/BeVietnamPro-Bold.ttf")[..])));
+        Arc::new(db)
+    }).clone()
+}
+
 /// Images are laid out on a 1200 px grid and drawn at twice that size.
 pub(crate) const SCALE: f32 = 2.0;
 /// Lossy WebP quality: text and icons stay crisp and a full scoreboard is a few hundred KB.

@@ -211,6 +211,8 @@ pub enum Notice {
     Result(Match),
     /// `report` is absent in notices queued by older versions; they are sent as text.
     Report { text: String, #[serde(default)] report: Option<crate::reports::Report> },
+    /// A rendered MP4 queued after the monthly card; the delivery worker uploads the file.
+    Race { path: String, caption: String },
 }
 pub fn n(v: &Value, key: &str) -> i64 { v[key].as_i64().unwrap_or(0) }
 pub fn s(v: &Value, key: &str) -> String { v[key].as_str().unwrap_or("").to_owned() }

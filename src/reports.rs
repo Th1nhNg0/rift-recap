@@ -282,6 +282,23 @@ fn periods(date: chrono::NaiveDate, monthly: bool) -> Vec<Period> {
 }
 pub fn notice(report: Report, lang: Lang) -> Notice { Notice::Report { text: report.text(lang), report: Some(report) } }
 
+/// Render the month's race in the background and queue it after the monthly card.
+async fn monthly_race(app: Arc<App>) -> Result<()> {
+    let lang = app.cfg.language;
+    let (_, end) = window(&app, Period::Monthly)?;
+    let timezone = app.cfg.reports.timezone.parse::<chrono_tz::Tz>()?;
+    let key = chrono::DateTime::from_timestamp(end, 0).unwrap_or_default().with_timezone(&timezone).format("%Y-%m").to_string();
+    let directory = app.cfg.database.parent().unwrap_or(std::path::Path::new(".")).join("race");
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join(format!("{key}.mp4"));
+    let render_app = app.clone();
+    let target = path.clone();
+    tokio::task::spawn_blocking(move || crate::race_video::render(&render_app, lang, &target)).await??;
+    let caption = crate::race_video::caption(&app, lang)?;
+    app.store.queue_report(&format!("race/{key}"), &Notice::Race { path: path.to_string_lossy().into_owned(), caption })?;
+    Ok(())
+}
+
 pub async fn scheduler(app: Arc<App>) -> Result<()> {
     let timezone = app.cfg.reports.timezone.parse::<chrono_tz::Tz>()?;
     loop {
@@ -292,11 +309,19 @@ pub async fn scheduler(app: Arc<App>) -> Result<()> {
             let day = time.date_naive().to_string();
             if enabled && due && app.channel(true)? != 0 && app.store.setting("last_report")?.as_deref() != Some(&day) {
                 refresh_ranks(&app).await?;
+                let due_periods = periods(time.date_naive(), app.cfg.reports.monthly);
                 let mut queued = Vec::new();
-                for period in periods(time.date_naive(), app.cfg.reports.monthly) {
+                for &period in &due_periods {
                     if let Some(report) = build(&app, period)? { queued.push((format!("report/{day}/{}", period.key()), notice(report, app.cfg.language))); }
                 }
                 app.store.schedule_reports(&day, &queued)?;
+                let monthly_queued = due_periods.contains(&Period::Monthly) && queued.iter().any(|(key, _)| key.ends_with("/monthly"));
+                if app.cfg.reports.video && monthly_queued {
+                    let app = app.clone();
+                    tokio::spawn(async move {
+                        if let Err(error) = monthly_race(app).await { warn!(%error, "Monthly race video failed"); }
+                    });
+                }
             }
             Ok(())
         }.await;

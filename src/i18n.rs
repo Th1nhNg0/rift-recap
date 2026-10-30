@@ -249,6 +249,11 @@ catalog! {
     ReportRangeFormat: "%d/%m/%Y", "%d %b %Y";
     MatchesCount: "{} trận", "{} matches";
     GroupLp: "TỔNG LP NHÓM", "GROUP LP";
+    RaceTitle: "LP THÁNG {}", "LP · {}";
+    RaceGroup: "TỔNG NHÓM", "GROUP TOTAL";
+    RacePeak: "ĐỈNH CAO NHẤT CỦA THÁNG", "MONTH HIGH";
+    RaceLow: "ĐÁY SÂU NHẤT CỦA THÁNG", "MONTH LOW";
+    RaceCaption: "Bảng đua LP tháng {}", "LP race · {}";
     MvpMonth: "MVP tháng {}", "MVP of {}";
     MvpLine: "{} điểm · {} trận · {} thắng", "{} rating · {} games · {} wins";
     HonoursSection: "Danh hiệu", "Honours";
