@@ -268,36 +268,21 @@ fn compute_scanned(app: &App, period: Period, start: i64, end: i64, scan: impl F
     Ok(Some(Report { period, start, end, timezone: app.cfg.reports.timezone.clone(), matches: games, players, partial_lp: partial }))
 }
 
-/// Which reports a local date gets: weekly on Sunday, monthly on the month's last day
-/// (replacing the daily one), both when the month ends on a Sunday.
-fn periods(date: chrono::NaiveDate, monthly: bool) -> Vec<Period> {
+/// Which reports a local date gets: daily every day, weekly on Sundays (with daily),
+/// and monthly on the month's last day (with daily and weekly).
+pub(crate) fn periods(date: chrono::NaiveDate, monthly: bool) -> Vec<Period> {
     let sunday = date.weekday() == chrono::Weekday::Sun;
     let month_end = monthly && date.succ_opt().is_some_and(|next| next.day() == 1);
-    match (sunday, month_end) {
-        (true, true) => vec![Period::Weekly, Period::Monthly],
-        (true, false) => vec![Period::Weekly],
-        (false, true) => vec![Period::Monthly],
-        (false, false) => vec![Period::Daily],
+    if month_end {
+        vec![Period::Daily, Period::Weekly, Period::Monthly]
+    } else if sunday {
+        vec![Period::Daily, Period::Weekly]
+    } else {
+        vec![Period::Daily]
     }
 }
 pub fn notice(report: Report, lang: Lang) -> Notice { Notice::Report { text: report.text(lang), report: Some(report) } }
 
-/// Render the month's race in the background and queue it after the monthly card.
-async fn monthly_race(app: Arc<App>) -> Result<()> {
-    let lang = app.cfg.language;
-    let (_, end) = window(&app, Period::Monthly)?;
-    let timezone = app.cfg.reports.timezone.parse::<chrono_tz::Tz>()?;
-    let key = chrono::DateTime::from_timestamp(end, 0).unwrap_or_default().with_timezone(&timezone).format("%Y-%m").to_string();
-    let directory = app.cfg.database.parent().unwrap_or(std::path::Path::new(".")).join("race");
-    std::fs::create_dir_all(&directory)?;
-    let path = directory.join(format!("{key}.mp4"));
-    let render_app = app.clone();
-    let target = path.clone();
-    tokio::task::spawn_blocking(move || crate::race_video::render(&render_app, lang, &target)).await??;
-    let caption = crate::race_video::caption(&app, lang)?;
-    app.store.queue_report(&format!("race/{key}"), &Notice::Race { path: path.to_string_lossy().into_owned(), caption })?;
-    Ok(())
-}
 
 pub async fn scheduler(app: Arc<App>) -> Result<()> {
     let timezone = app.cfg.reports.timezone.parse::<chrono_tz::Tz>()?;
@@ -315,13 +300,6 @@ pub async fn scheduler(app: Arc<App>) -> Result<()> {
                     if let Some(report) = build(&app, period)? { queued.push((format!("report/{day}/{}", period.key()), notice(report, app.cfg.language))); }
                 }
                 app.store.schedule_reports(&day, &queued)?;
-                let monthly_queued = due_periods.contains(&Period::Monthly) && queued.iter().any(|(key, _)| key.ends_with("/monthly"));
-                if app.cfg.reports.video && monthly_queued {
-                    let app = app.clone();
-                    tokio::spawn(async move {
-                        if let Err(error) = monthly_race(app).await { warn!(%error, "Monthly race video failed"); }
-                    });
-                }
             }
             Ok(())
         }.await;

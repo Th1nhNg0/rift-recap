@@ -40,7 +40,7 @@ You and your friends grind ranked together, then argue about who carried and who
 - **Optional AI commentary** – a short, funny line per tracked player with a title and emoji, written by any OpenAI-compatible model in the voice *you* define in a `prompt.md`. Custom Discord emojis are supported.
 - **Slash commands** – `/lastgame`, `/rank`, `/players`, `/version` and admin `/config` for channels, roster and on-demand reports.
 - **English and Vietnamese** – messages, images and slash-command descriptions.
-- **Tiny and self-contained** – one Rust binary. SQLite is bundled, fonts are embedded, images are drawn with `resvg`, and the monthly race video is encoded by `ffmpeg` inside the image. No browser, Python or Node. Around 20 MB of RAM when idle, about 45 MB at peak, and a few hundred MB for the ~15-second monthly video render.
+- **Tiny and self-contained** – one Rust binary. SQLite is bundled, fonts are embedded, images are drawn with `resvg`. No browser, Python or Node. A 31 MB Docker image, around 20 MB of RAM when idle and about 45 MB at peak.
 
 ## Screenshots
 
@@ -75,7 +75,6 @@ You need three things, whichever way you run it:
 - A **Riot API key** from <https://developer.riotgames.com/> with Account-V1, Match-V5 and League-V4. Development keys expire after 24 hours, so register a personal key for a bot that should keep running.
 - A **Discord bot** invited with the `bot` and `applications.commands` scopes. In the channels it posts to it needs **View Channel**, **Send Messages** and **Attach Files**. No administrator rights and no privileged intents; only the `GUILDS` intent is used.
 - The Riot IDs of your friends.
-- Optional: **ffmpeg** on `PATH` for the monthly race video. The Docker image includes it; without it the bot still posts every card and simply logs that the video cannot be rendered.
 
 ### Docker
 
@@ -96,7 +95,7 @@ The container runs as your user (`UID`/`GID`, default 1000) and keeps the databa
 
 ### Prebuilt binary
 
-Download the static Linux binary from the [latest release](https://github.com/Th1nhNg0/rift-recap/releases/latest) and run it with the same arguments as below. It has no runtime dependencies; the optional monthly race video needs `ffmpeg` on `PATH`.
+Download the static Linux binary from the [latest release](https://github.com/Th1nhNg0/rift-recap/releases/latest) and run it with the same arguments as below. It has no dependencies.
 
 ### From source
 
@@ -153,15 +152,8 @@ New players are baselined silently the first time they are seen, so the bot neve
 
 ## Reports
 
-The daily report posts on ordinary days, the weekly one on Sundays, and the monthly one on the last day of the month, with the weekly one too when that day is a Sunday. They follow `reports.hour:minute` (default 23:59 in `reports.timezone`) and go to the channel set with `/config rankchannel`; `/config rankreport` posts one on demand. Each report is sent as an image, with its text version as a fallback.
+The daily report posts every day. Sundays add the weekly report, and the last day of the month posts the monthly and weekly reports alongside the daily one. They follow `reports.hour:minute` (default 23:59 in `reports.timezone`) and go to the channel set with `/config rankchannel`; `/config rankreport` posts one on demand. Each report is sent as an image, with its text version as a fallback.
 
-### Monthly race video
-
-<a href="docs/race-2026-10.mp4"><img src="docs/race-2026-10.webp" alt="Monthly LP race video with an anonymised sample roster" width="860"></a>
-
-Click the poster for the 60-second clip (960×540 MP4, English, anonymised sample roster). The bot renders the same chart at 1280×720.
-
-On the last day of the month the bot can also post a **60-second 720p LP race video** after the card: the month's LP drawn as a line race, with the highs and lows called out. It is on by default (`reports.video = true`) and needs `ffmpeg` on the host; the Docker image ships it. Rendering happens in the background (~9 s at 720p on a modern CPU) and never blocks the card or the scoreboards.
 
 ### MVP of the month
 
@@ -189,7 +181,7 @@ Relative paths are resolved against the config file's directory. Unknown keys ar
 | `discord.guild_id` | – | The one server the bot serves |
 | `discord.games_channel_id` | – | Where results are posted |
 | `discord.rank_channel_id` | `0` | Where reports are posted (`0` disables reports) |
-| `reports.enabled`, `monthly`, `video`, `timezone`, `hour`, `minute` | on, on, on, `Asia/Ho_Chi_Minh`, `23`, `59` | Report schedule and the monthly race video |
+| `reports.enabled`, `monthly`, `timezone`, `hour`, `minute` | on, on, `Asia/Ho_Chi_Minh`, `23`, `59` | Report schedule |
 | `llm.*` | disabled | See below |
 
 Secrets are read only from the environment or the dotenv file you pass with `--env-file`: `RIOT_API_KEY`, `DISCORD_TOKEN` and, optionally, `LLM_API_KEY`.
@@ -267,7 +259,7 @@ The tracker polls match history for your roster, stores every new game together 
 
 **How is the MVP of the month picked?** The best average of win rate, KDA, damage per game, CS per minute and vision per minute, each relative to the squad's own average and scaled so the eligible group averages 1.00. A player needs at least 10 games and a fifth of the busiest player's games. Details in [MVP of the month](#mvp-of-the-month).
 
-**How much does it cost to run?** Next to nothing: about 20 requests per minute to Riot, a few MB of disk, and a 1 vCPU, 256 MB machine is plenty (give it 512 MB if you keep the monthly race video enabled).
+**How much does it cost to run?** Next to nothing: about 20 requests per minute to Riot, a few MB of disk, and a 1 vCPU, 256 MB machine is plenty.
 
 **Why a bot and not a web page?** Your squad is already in Discord. Results show up where you talk, with nothing to open.
 
@@ -279,10 +271,9 @@ cargo test --locked                       # offline; layouts are smoke-tested
 ./target/debug/rift-recap --env-file .env render-scoreboard --language all --output data/board.webp
 ./target/debug/rift-recap --env-file .env render-report --period weekly --language all --output data/report.webp
 ./target/debug/rift-recap --env-file .env render-report --period monthly --language all --output data/report.webp
-./target/debug/rift-recap --env-file .env render-race --language all --output data/race.mp4
 ```
 
-`render-race` writes a 60 s 1280x720 MP4 of the current month's LP race with `ffmpeg`; `--language all` writes one file per language. `render-scoreboard` draws a stored or recent real match to a WebP (add `--post` to also send it to the games channel). `render-report` writes `<stem>-<period>.webp` and a matching `.txt` for a daily, weekly or monthly report — the monthly one includes the MVP band — and `--language all` writes one pair per language. Neither imports matches, touches baselines or calls an LLM.
+`render-scoreboard` draws a stored or recent real match to a WebP (add `--post` to also send it to the games channel). `render-report` writes `<stem>-<period>.webp` and a matching `.txt` for a daily, weekly or monthly report — the monthly one includes the MVP band — and `--language all` writes one pair per language. Neither imports matches, touches baselines or calls an LLM.
 
 | Path | Role |
 |---|---|
@@ -293,7 +284,6 @@ cargo test --locked                       # offline; layouts are smoke-tested
 | `src/render.rs`, `src/render_assets.rs` | SVG canvas and rasterisation; Data Dragon artwork cache |
 | `src/scoreboard.rs`, `src/report_card.rs` | Scoreboard and report card layouts |
 | `src/reports.rs` | Report aggregation and the monthly MVP rating |
-| `src/race_video.rs` | Monthly LP race video: resvg frames piped to ffmpeg |
 | `src/presentation.rs` | Per-match badges, featured player and standout scoring |
 | `src/llm.rs` | Optional commentary client |
 | `src/i18n.rs` | Compile-checked English and Vietnamese catalogue |

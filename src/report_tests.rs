@@ -123,3 +123,27 @@ fn mvp_requires_a_real_sample() {
     assert_eq!(quiet.mvp_ratings().len(), 1);
     assert_eq!(quiet.mvp().unwrap().player, 0);
 }
+
+#[test]
+fn scheduled_report_periods_cascade() {
+    use chrono::NaiveDate;
+    // Ordinary weekday (Wednesday): daily only.
+    let wednesday = NaiveDate::from_ymd_opt(2024, 3, 27).unwrap();
+    assert_eq!(reports::periods(wednesday, true), vec![Period::Daily]);
+    assert_eq!(reports::periods(wednesday, false), vec![Period::Daily]);
+
+    // Sunday (not month end): weekly also includes daily.
+    let sunday = NaiveDate::from_ymd_opt(2024, 3, 24).unwrap();
+    assert_eq!(reports::periods(sunday, true), vec![Period::Daily, Period::Weekly]);
+    assert_eq!(reports::periods(sunday, false), vec![Period::Daily, Period::Weekly]);
+
+    // Month end on a weekday (Tuesday): monthly includes daily and weekly.
+    let month_end_tuesday = NaiveDate::from_ymd_opt(2024, 4, 30).unwrap();
+    assert_eq!(reports::periods(month_end_tuesday, true), vec![Period::Daily, Period::Weekly, Period::Monthly]);
+    assert_eq!(reports::periods(month_end_tuesday, false), vec![Period::Daily]);
+
+    // Month end on Sunday: monthly includes daily and weekly.
+    let month_end_sunday = NaiveDate::from_ymd_opt(2024, 3, 31).unwrap();
+    assert_eq!(reports::periods(month_end_sunday, true), vec![Period::Daily, Period::Weekly, Period::Monthly]);
+    assert_eq!(reports::periods(month_end_sunday, false), vec![Period::Daily, Period::Weekly]);
+}

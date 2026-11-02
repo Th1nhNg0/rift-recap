@@ -119,13 +119,6 @@ impl Store {
         let row: Option<(i64, String)> = self.db()?.query_row("SELECT at,data FROM ranks WHERE puuid=? AND queue=? AND at<=? ORDER BY at DESC LIMIT 1", params![puuid, queue, at], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
         row.map(|(at, text)| Ok(Snapshot { at, rank: decode(&text)? })).transpose()
     }
-    /// Every rank snapshot strictly after `from` and up to `to`, oldest first.
-    pub fn rank_series(&self, puuid: &str, queue: u16, from: i64, to: i64) -> Result<Vec<Snapshot>> {
-        let db = self.db()?;
-        let mut q = db.prepare("SELECT at,data FROM ranks WHERE puuid=? AND queue=? AND at>? AND at<=? ORDER BY at")?;
-        let rows: Vec<(i64, String)> = q.query_map(params![puuid, queue, from, to], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
-        rows.into_iter().map(|(at, text)| Ok(Snapshot { at, rank: decode(&text)? })).collect()
-    }
     pub fn first_rank(&self, puuid: &str, queue: u16, start: i64, end: i64) -> Result<Option<Snapshot>> {
         let row: Option<(i64, String)> = self.db()?.query_row("SELECT at,data FROM ranks WHERE puuid=? AND queue=? AND at>? AND at<=? ORDER BY at LIMIT 1", params![puuid, queue, start, end], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
         row.map(|(at, text)| Ok(Snapshot { at, rank: decode(&text)? })).transpose()
