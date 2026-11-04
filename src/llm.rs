@@ -1,11 +1,11 @@
 use crate::{config::{Llm, Secrets}, i18n::{Lang, Msg}, model::{Match, Participant, Rank}, presentation::plain, riot::bounded_body};
 use anyhow::{Result, bail, ensure};
 use reqwest::{Client, Url, header::HeaderValue};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::{fs, time::Duration};
 
 /// Optional commentary through any OpenAI-compatible Chat Completions endpoint.
-pub struct Commentator { http: Client, url: Url, key: Option<HeaderValue>, model: String, timeout: Duration, style: Option<String>, names: bool }
+pub struct Commentator { http: Client, url: Url, key: Option<HeaderValue>, model: String, timeout: Duration, style: Option<String>, names: bool, options: Map<String, Value> }
 
 /// Fallback persona when no `llm.prompt_file` is configured.
 const DEFAULT_STYLE: &str = "Write like a friend in a group chat about League of Legends: light-hearted, playful teasing of the gameplay only, never of region, gender, appearance or family. Praise real standouts and mock real mistakes, always backed by the numbers.";
@@ -23,7 +23,7 @@ impl Commentator {
     }
     fn new(cfg: &Llm, key: &str) -> Result<Self> {
         ensure!(!cfg.model.trim().is_empty(), "llm.model is empty");
-        ensure!((1..=120).contains(&cfg.timeout_secs), "llm.timeout_secs must be 1..120");
+        ensure!((1..=600).contains(&cfg.timeout_secs), "llm.timeout_secs must be 1..600");
         let base = cfg.base_url.trim().trim_end_matches('/');
         let url = Url::parse(&format!("{base}/chat/completions")).map_err(|_| anyhow::anyhow!("Invalid llm.base_url"))?;
         ensure!(url.username().is_empty() && url.password().is_none() && url.query().is_none() && url.fragment().is_none(), "llm.base_url must not contain credentials, query or fragment");
@@ -49,7 +49,7 @@ impl Commentator {
             }
             None => None,
         };
-        Ok(Self { http, url, key, model: cfg.model.trim().to_owned(), timeout, style, names: cfg.send_names })
+        Ok(Self { http, url, key, model: cfg.model.trim().to_owned(), timeout, style, names: cfg.send_names, options: request_options(cfg)? })
     }
     pub async fn enhance(&self, m: &Match, lang: Lang, recent: &[String], highlights: &[String]) -> Result<String> {
         tokio::time::timeout(self.timeout, self.request(m, lang, recent, highlights)).await.map_err(|_| anyhow::anyhow!("LLM deadline exceeded"))?
@@ -59,10 +59,11 @@ impl Commentator {
         ensure!(!m.remake && !players.is_empty(), "No commentary needed");
         let group = (2..=5).contains(&players.len()) && players.iter().all(|p| p.team == players[0].team);
         let prompt = format!("{}\n\nWrite in {}.\n\n{CONTRACT}{}", self.style.as_deref().unwrap_or(DEFAULT_STYLE), lang.english_name(), if group { format!(" {KEY_PLAYER}") } else { String::new() });
-        let payload = json!({ "model": self.model, "messages": [
+        let mut payload = json!({ "model": self.model, "messages": [
             {"role": "system", "content": prompt},
             {"role": "user", "content": context(m, self.names, recent, highlights).to_string()}
         ], "max_tokens": 1500, "stream": false });
+        if let Some(body) = payload.as_object_mut() { body.extend(self.options.clone()); }
         let mut request = self.http.post(self.url.clone()).json(&payload);
         if let Some(key) = &self.key { request = request.header("Authorization", key.clone()); }
         let response = request.send().await.map_err(|_| anyhow::anyhow!("LLM network request failed"))?;
@@ -84,6 +85,26 @@ impl Commentator {
         Ok(out.join("\n") + &key.unwrap_or_default())
     }
 }
+/// Extra request fields: the reasoning effort, and for a Hermes gateway the upstream provider.
+/// Hermes reads the effort from `model_options` and honours `model` only next to an explicit `provider`.
+fn request_options(cfg: &Llm) -> Result<Map<String, Value>> {
+    let clean = |v: &Option<String>| v.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
+    let hermes = cfg.provider.trim().eq_ignore_ascii_case("hermes");
+    let mut out = Map::new();
+    if let Some(effort) = clean(&cfg.reasoning_effort) {
+        ensure!(EFFORTS.contains(&effort.as_str()), "llm.reasoning_effort must be one of {}", EFFORTS.join(", "));
+        if hermes { out.insert("model_options".into(), json!({ "reasoning_effort": effort })); }
+        else { out.insert("reasoning_effort".into(), json!(effort)); }
+    }
+    if let Some(provider) = clean(&cfg.upstream_provider) {
+        ensure!(hermes, "llm.upstream_provider is only used with provider = \"hermes\"");
+        ensure!(provider.len() <= 64 && provider.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)), "llm.upstream_provider is not a provider id");
+        out.insert("provider".into(), json!(provider));
+    }
+    Ok(out)
+}
+const EFFORTS: [&str; 7] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
 /// Riot queue ids named the way a person would say them.
 fn queue_name(queue: u16) -> &'static str {
     match queue {
@@ -299,5 +320,18 @@ mod tests {
         assert_eq!(rank_label(Some(&Rank { queue: 420, tier: "EMERALD".into(), division: "II".into(), lp: 43 })).as_deref(), Some("EMERALD II 43 LP"));
         assert_eq!(rank_label(Some(&Rank { queue: 420, tier: "MASTER".into(), division: String::new(), lp: 210 })).as_deref(), Some("MASTER 210 LP"));
         assert_eq!(rank_label(None), None);
+    }
+
+    #[test]
+    fn hermes_gets_effort_in_model_options_and_an_upstream_provider() {
+        let cfg = |provider: &str, effort: Option<&str>, upstream: Option<&str>| crate::config::Llm {
+            provider: provider.into(), reasoning_effort: effort.map(Into::into), upstream_provider: upstream.map(Into::into), ..Default::default() };
+        let hermes = request_options(&cfg("hermes", Some("high"), Some("openai-codex"))).unwrap();
+        assert_eq!(Value::Object(hermes), json!({ "model_options": { "reasoning_effort": "high" }, "provider": "openai-codex" }));
+        let openai = request_options(&cfg("openrouter", Some(" medium "), None)).unwrap();
+        assert_eq!(Value::Object(openai), json!({ "reasoning_effort": "medium" }));
+        assert!(request_options(&cfg("openrouter", None, None)).unwrap().is_empty());
+        assert!(request_options(&cfg("hermes", Some("turbo"), None)).is_err());
+        assert!(request_options(&cfg("openrouter", None, Some("openai-codex"))).is_err());
     }
 }

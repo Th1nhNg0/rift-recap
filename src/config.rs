@@ -54,6 +54,10 @@ pub struct Llm {
     pub prompt_file: Option<PathBuf>,
     /// Send tracked players' display names so the prompt can refer to them (e.g. inside jokes).
     pub send_names: bool,
+    /// Optional reasoning effort for models that support it (`low`, `medium`, `high`...); the provider default when unset.
+    pub reasoning_effort: Option<String>,
+    /// Hermes gateway only: the upstream provider that serves `model` (e.g. `openai-codex`). Without it Hermes uses its default model.
+    pub upstream_provider: Option<String>,
 }
 #[derive(Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -82,7 +86,7 @@ impl Default for Reports {
     fn default() -> Self { Self { enabled: true, monthly: true, timezone: "Asia/Ho_Chi_Minh".into(), hour: 23, minute: 59 } }
 }
 impl Default for Llm {
-    fn default() -> Self { Self { enabled: false, provider: "openrouter".into(), model: String::new(), base_url: "https://openrouter.ai/api/v1".into(), timeout_secs: 15, prompt_file: None, send_names: false } }
+    fn default() -> Self { Self { enabled: false, provider: "openrouter".into(), model: String::new(), base_url: "https://openrouter.ai/api/v1".into(), timeout_secs: 15, prompt_file: None, send_names: false, reasoning_effort: None, upstream_provider: None } }
 }
 impl Default for Highlights {
     fn default() -> Self { Self { enabled: true } }

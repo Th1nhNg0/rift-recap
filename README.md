@@ -218,13 +218,16 @@ model = "openai/gpt-4o-mini"
 base_url = "https://openrouter.ai/api/v1"   # OpenAI, Ollama (http://localhost:11434/v1), a local gateway...
 prompt_file = "prompt.md"                   # optional persona and style
 send_names = false                          # true lets the prompt use inside jokes about your friends
-timeout_secs = 15                           # seconds; raise it for slow local models
+timeout_secs = 15                           # seconds (up to 600); raise it for slow or reasoning models
+reasoning_effort = "medium"                 # optional: none, minimal, low, medium, high, xhigh, max
 ```
 
 - Put `LLM_API_KEY` in `.env` (not needed for a server on `localhost`).
 - Copy [`prompt.example.md`](prompt.example.md) to `prompt.md` and make it yours. It controls tone and style only; the JSON reply format is enforced by the bot.
 - **Custom emojis:** list Discord emoji codes such as `<:name:123456789012345678>` in the prompt file with a short description of each. The bot only accepts codes it finds there, so the model cannot invent one. Emojis uploaded as *application emojis* work everywhere.
 - The model receives final statistics of all ten players (the other five are context), the last few comments so it avoids repeating itself, and display names only if `send_names = true`. Never Riot IDs, PUUIDs or Discord IDs. That data goes to the provider you choose.
+- **Hermes gateway:** set `provider = "hermes"` and `base_url = "http://127.0.0.1:8642/v1"`. With `model = "hermes-agent"` the gateway's default model answers. To pick one, name it and its upstream provider, e.g. `model = "gpt-6-luna"` with `upstream_provider = "openai-codex"`; `reasoning_effort` is then sent the way Hermes expects it.
+- Commentary is added to the posted scoreboard when it arrives, so a long `timeout_secs` only delays it. Past the timeout the game keeps its scoreboard without commentary.
 - Games without commentary, such as imported history, get theirs the first time someone runs `/lastgame`.
 
 ## Run it as a service

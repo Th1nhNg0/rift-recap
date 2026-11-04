@@ -32,9 +32,11 @@ enabled = true
 
 [llm]
 enabled = false
-provider = "openrouter" # Descriptive label only; every provider uses the same OpenAI-compatible HTTP contract.
+provider = "openrouter" # Label, except "hermes" (a Hermes gateway); every provider uses the same OpenAI-compatible HTTP contract.
 model = ""              # e.g. a model ID available to your OpenRouter/OpenAI account, or a local model name
 base_url = "https://openrouter.ai/api/v1" # API root; "/chat/completions" is appended. http:// only for localhost.
-timeout_secs = 15
+timeout_secs = 15       # 1..600; reasoning models can need minutes
 # prompt_file = "prompt.md" # Optional persona/style (see prompt.example.md); a built-in style is used when unset.
 # send_names = false        # true sends tracked players' display names so the prompt can use inside jokes.
+# reasoning_effort = "high" # Optional: none, minimal, low, medium, high, xhigh, max. Provider default when unset.
+# upstream_provider = "openai-codex" # Hermes only: serve `model` from this provider instead of the gateway default.
