@@ -1,5 +1,6 @@
 mod config;
 mod discord;
+mod highlights;
 mod i18n;
 mod llm;
 mod model;
@@ -188,7 +189,8 @@ async fn execute() -> Result<()> {
         Mode::CommentaryContext { match_id } => {
             let game = render::preview_match(&app, match_id.as_deref()).await?;
             let recent = app.store.recent_commentary(&game.id, 6)?;
-            println!("{}", llm::context(&game, app.cfg.llm.send_names, &recent));
+            let highlights: Vec<String> = highlights::text(&app, &game, app.cfg.language)?.lines().map(str::to_owned).collect();
+            println!("{}", llm::context(&game, app.cfg.llm.send_names, &recent, &highlights));
             Ok(())
         }
         Mode::Run { no_discord, once, register_commands } => {

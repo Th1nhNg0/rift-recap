@@ -224,6 +224,8 @@ catalog! {
     CmdRankchannel: "Bật/tắt hoặc đổi kênh báo cáo hạng", "Enable/disable or redirect rank reports";
     CmdAddplayer: "Thêm người chơi (chỉ quản trị viên)", "Track an account (administrator)";
     CmdRemoveplayer: "Xóa người chơi (chỉ quản trị viên)", "Stop tracking an account (administrator)";
+    CmdNemesis: "Tướng khắc chế từng người chơi", "Champions each player loses to most";
+    OptPlayer: "Người chơi (không bắt buộc)", "Optional tracked player";
     CmdRankreport: "Đăng báo cáo hạng ngay", "Post a rank report now";
     OptChannel: "Kênh văn bản", "Target text channel";
     OptEnabled: "Bật báo cáo tự động", "Enable automatic reports";
@@ -262,6 +264,30 @@ catalog! {
     FmtDeaths: "{} lần chết", "{} deaths";
     FmtWinRate: "{}% thắng ({} trận)", "{}% wins ({} games)";
     ChoiceMonthly: "Hằng tháng", "Monthly";
+    AwStreak: "Chuỗi thắng dài nhất", "Longest win streak";
+    AwNemesis: "Khắc tinh của tháng", "Nemesis of the month";
+    AwVictim: "Con mồi yêu thích", "Favourite victim";
+    FmtStreak: "{} trận thắng liên tiếp", "{} wins in a row";
+    FmtMatchup: "{} · {}–{}", "{} · {}–{}";
+
+    // Highlights under a game's scoreboard
+    HlWinStreak: "🔥 {} đang có chuỗi {} trận thắng", "🔥 {} is on a {}-game win streak";
+    HlLossStreak: "📉 {} đã thua {} trận liên tiếp, ai đó hỏi thăm đi", "📉 {} has lost {} in a row, someone check on them";
+    HlWinStreakEnded: "🧊 {} đứt chuỗi {} trận thắng", "🧊 {}'s {}-game win streak is over";
+    HlLossStreakEnded: "🌤️ {} đã ngắt chuỗi {} trận thua", "🌤️ {} snapped a {}-game losing streak";
+    HlPromoted: "🎉 {} lên {} ({})", "🎉 {} reached {} ({})";
+    HlDemoted: "💀 {} rơi xuống {} ({})", "💀 {} dropped to {} ({})";
+    HlPenta: "🏆 PENTAKILL! {} với {}", "🏆 PENTAKILL by {} on {}";
+    HlFirstQuadra: "⚡ Quadra kill đầu tiên được ghi nhận của {} ({})", "⚡ First recorded quadra kill for {} ({})";
+    HlChampionGames: "🎖️ {}: trận thứ {} với {}", "🎖️ {}: game {} on {}";
+    HlBestKills: "📈 Kỷ lục mới của {}: {} hạ gục", "📈 New personal best for {}: {} kills";
+    HlBestDamage: "📈 Kỷ lục mới của {}: {} sát thương", "📈 New personal best for {}: {} damage";
+    HlNemesis: "😈 {} lại thua {} ({}–{})", "😈 {} lost to {} again ({}–{})";
+
+    // Nemesis command
+    NemesisTitle: "😈 Khắc tinh (tối thiểu {} trận đối đầu, trong {} ngày gần nhất)", "😈 Nemeses (at least {} games against, last {} days)";
+    NemesisNone: "chưa đủ trận", "not enough games yet";
+    NemesisVictim: "🍖 con mồi: {}", "🍖 favourite victim: {}";
 
     // Images
     ImgVictory: "CHIẾN THẮNG", "VICTORY";

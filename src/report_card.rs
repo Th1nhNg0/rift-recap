@@ -37,7 +37,9 @@ pub async fn image(app: &App, report: Report, lang: Lang) -> Result<Vec<u8>> {
     let tiers = report.players.iter().flat_map(|p| p.ranks.iter()).filter_map(|r| r.rank.as_ref()).map(|r| r.tier.clone()).collect();
     let wanted = Wanted {
         splash: featured(&report).and_then(top_champion).map(str::to_owned),
-        champions: report.players.iter().filter_map(top_champion).map(str::to_owned).collect(), tiers, ..Default::default()
+        champions: report.players.iter().filter_map(top_champion).map(str::to_owned)
+            .chain(report.players.iter().flat_map(|p| [&p.nemesis, &p.victim]).flatten().map(|m| m.champion.clone())).collect(),
+        tiers, ..Default::default()
     };
     let art = Assets::load(wanted, app.cfg.database.parent().unwrap_or(Path::new(".")).join("artwork")).await;
     blocking(move || card(&report, lang, &art)).await
@@ -52,7 +54,8 @@ pub fn card(report: &Report, lang: Lang, art: &Assets) -> Result<Vec<u8>> {
     let dropped: Vec<&PlayerLine> = report.players.iter().filter(|p| p.lp().is_some_and(|d| d < 0)).collect();
     let unknown: Vec<&PlayerLine> = report.players.iter().filter(|p| p.lp().is_none()).collect();
     let blocks = [(lang.t(Msg::BlockClimbed), GAIN, climbed), (lang.t(Msg::BlockDropped), LOSS, dropped), (lang.t(Msg::BlockUnknown), NEUTRAL, unknown)];
-    let honours_h = if awards.is_empty() { 0.0 } else { HEAD_H + 2.0 * TILE_H };
+    let tile_rows = awards.len().div_ceil(3) as f32;
+    let honours_h = if awards.is_empty() { 0.0 } else { HEAD_H + tile_rows * TILE_H };
     let height = HERO + honours_h + if mvp.is_some() { MVP_H } else { 0.0 } + blocks.iter().filter(|(_, _, rows)| !rows.is_empty()).map(|(_, _, rows)| HEAD_H + SUB_H + ROW * rows.len() as f32 + 6.0).sum::<f32>() + 8.0;
     ensure!(height <= 8000.0, "Report exceeds image bounds");
     let mut cv = Canvas { svg: format!("<svg xmlns='http://www.w3.org/2000/svg' width='{W}' height='{height}'><g font-family='Be Vietnam Pro,DejaVu Sans,sans-serif'>"), clips: 0 };
@@ -80,10 +83,11 @@ pub fn card(report: &Report, lang: Lang, art: &Assets) -> Result<Vec<u8>> {
             cv.label(x + 24.0, top + 22.0, 10.5, ink, 700, "start", 2.0, &lang.t(award.title).to_uppercase());
             cv.label(x + 24.0, top + 44.0, 16.0, CREAM, 700, "start", 0.0, &short(&player.name, 18));
             cv.label(x + 24.0, top + 58.0, 11.5, SOFT, 400, "start", 0.0, &award.value);
-            cv.picture(portrait(art, player), x + width - 74.0, top + 11.0, 42.0, 42.0, 0.0, "xMidYMid slice");
+            let picture = award.champion.as_ref().and_then(|c| art.image(&format!("champion:{c}"))).or_else(|| portrait(art, player));
+            cv.picture(picture, x + width - 74.0, top + 11.0, 42.0, 42.0, 0.0, "xMidYMid slice");
             cv.frame(x + width - 74.0, top + 11.0, 42.0, 42.0, ink);
         }
-        y += 2.0 * TILE_H;
+        y += tile_rows * TILE_H;
     }
     let max_damage = report.players.iter().map(|p| p.damage_per_game().round() as i64).max().unwrap_or(1).max(1);
     let widest = report.players.iter().filter_map(PlayerLine::lp).map(i64::abs).max().unwrap_or(0).max(1);

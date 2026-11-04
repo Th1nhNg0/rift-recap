@@ -26,6 +26,10 @@ timezone = "Asia/Ho_Chi_Minh"
 hour = 23
 minute = 59
 
+[highlights]
+# Streak, milestone and nemesis lines under each game's scoreboard.
+enabled = true
+
 [llm]
 enabled = false
 provider = "openrouter" # Descriptive label only; every provider uses the same OpenAI-compatible HTTP contract.

@@ -14,6 +14,7 @@ pub struct Config {
     pub discord: Discord,
     pub reports: Reports,
     pub llm: Llm,
+    pub highlights: Highlights,
 }
 #[derive(Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -54,6 +55,12 @@ pub struct Llm {
     /// Send tracked players' display names so the prompt can refer to them (e.g. inside jokes).
     pub send_names: bool,
 }
+#[derive(Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Highlights {
+    /// Streak, milestone and nemesis lines under each game's scoreboard.
+    pub enabled: bool,
+}
 // Deliberately no Debug/Serialize: never render credentials through logging.
 pub struct Secrets {
     pub riot: String,
@@ -63,7 +70,7 @@ pub struct Secrets {
 impl Default for Config {
     fn default() -> Self {
         Self { players_file: "players.json".into(), database: "data/tracker.db".into(), language: Lang::Vi, retention_days: 180,
-            riot: Riot::default(), discord: Discord::default(), reports: Reports::default(), llm: Llm::default() }
+            riot: Riot::default(), discord: Discord::default(), reports: Reports::default(), llm: Llm::default(), highlights: Highlights::default() }
     }
 }
 impl Default for Riot {
@@ -76,6 +83,9 @@ impl Default for Reports {
 }
 impl Default for Llm {
     fn default() -> Self { Self { enabled: false, provider: "openrouter".into(), model: String::new(), base_url: "https://openrouter.ai/api/v1".into(), timeout_secs: 15, prompt_file: None, send_names: false } }
+}
+impl Default for Highlights {
+    fn default() -> Self { Self { enabled: true } }
 }
 impl Config {
     pub fn load(path: &Path, env_path: Option<&Path>) -> Result<(Self, Secrets)> {

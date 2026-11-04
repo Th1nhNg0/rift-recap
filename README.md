@@ -36,7 +36,8 @@ You and your friends grind ranked together, then argue about who carried and who
 
 - **Post-game scoreboard** – one image with splash art of the game's best tracked player, the result, the kill score and gold lead, then a table per team: KDA with kill participation, damage dealt and taken, gold, vision, CS, items, summoner spells and runes. Each team header shows its objectives (dragons, Baron, Herald, towers, inhibitors), average rank and total damage. Images are drawn at 2x and sent as lossy WebP, a few hundred KB each.
 - **LP and rank per game** – Solo/Duo and Flex, with the LP gained or lost beside each tracked player and the rank of all ten players. `MVP`, `ACE` and `WORST` labels sit on the portraits.
-- **Daily, weekly and monthly reports** – a splash-art header with the group's LP, then players who climbed and players who dropped in two blocks, each with record, KDA, damage, CS, vision and an LP-change bar. Weekly and monthly cards add six honours (kills, deaths, damage, farm, vision, win rate), and monthly cards crown an **MVP of the month** with the champion behind it.
+- **Daily, weekly and monthly reports** – a splash-art header with the group's LP, then players who climbed and players who dropped in two blocks, each with record, KDA, damage, CS, vision and an LP-change bar. Weekly and monthly cards add six honours (kills, deaths, damage, farm, vision, win rate), and monthly cards crown an **MVP of the month** with the champion behind it, plus three more honours: longest win streak, nemesis of the month and favourite victim.
+- **Streaks, milestones and nemeses** – short lines under each scoreboard: ranked win and loss streaks, a streak that ends, a new tier, pentakills and a first quadra kill, the 25th, 50th or 100th game on a champion, a personal best, and "lost to Zed again (1–7)" when a champion keeps beating someone. `/nemesis` lists each player's worst matchups.
 - **Optional AI commentary** – a short, funny line per tracked player with a title and emoji, written by any OpenAI-compatible model in the voice *you* define in a `prompt.md`. Custom Discord emojis are supported.
 - **Slash commands** – `/lastgame`, `/rank`, `/players`, `/version` and admin `/config` for channels, roster and on-demand reports.
 - **English and Vietnamese** – messages, images and slash-command descriptions.
@@ -143,6 +144,7 @@ New players are baselined silently the first time they are seen, so the bot neve
 | `/lastgame` | Posts the latest scoreboard, with AI commentary when enabled | everyone |
 | `/rank` | Current Solo/Duo and Flex rank of everyone | everyone |
 | `/players` | The tracked roster | everyone (private reply) |
+| `/nemesis [player]` | Each player's three worst enemy champions and favourite victim | everyone |
 | `/version` | Show bot version | everyone |
 | `/config channel` | Set the channel for match results | Manage Server |
 | `/config rankchannel` | Enable, disable or move the report channel | Manage Server |
@@ -163,6 +165,23 @@ The monthly card crowns an MVP above the honours: the player with the highest **
 
 Only players with at least **10 games** and at least a fifth of the busiest player's games qualify, so a short lucky streak cannot take the month. Ties go to the player with more games, then to the earlier name, and the MVP also leads the report's text form. Requesting a monthly report before the month ends ranks the month so far.
 
+## Highlights
+
+Up to four lines are posted under each scoreboard, and stay there when the AI commentary is added. The AI also sees them, so it can play on a streak or a nemesis. They come only from games the bot has stored, so they reach back `retention_days` at most and miss games played while the bot was down.
+
+| Line | When |
+|---|---|
+| 🎉 / 💀 New tier | A ranked game moves a player into a new tier, up or down |
+| 🏆 Pentakill | Every pentakill |
+| 🔥 / 📉 Streak | 3, 5, 7 and 10 ranked wins or losses in a row, then every fifth game. Normals, ARAM and remakes neither extend nor break a streak |
+| 🧊 / 🌤️ Streak over | A run of 5 or more ends |
+| 😈 Nemesis | A loss on Summoner's Rift to a champion the player has lost to at least 70% of the time over 5+ games |
+| ⚡ First quadra | The first quadra kill on record |
+| 🎖️ Champion games | The 25th, 50th, 100th game on a champion, then every hundredth |
+| 📈 Personal best | Most kills or damage in a game mode, after at least 20 earlier games in it |
+
+`/nemesis` counts every stored Summoner's Rift game and lists champions with at least 5 games against them. The monthly card adds **Longest win streak** (3+ ranked wins), **Nemesis of the month** (the worst record against one champion, 3+ games) and **Favourite victim** (the best). Turn the lines off with `highlights.enabled = false`.
+
 ## Configuration
 
 Relative paths are resolved against the config file's directory. Unknown keys are rejected so typos fail loudly. See [`config.example.toml`](config.example.toml) for the annotated file.
@@ -182,6 +201,7 @@ Relative paths are resolved against the config file's directory. Unknown keys ar
 | `discord.games_channel_id` | – | Where results are posted |
 | `discord.rank_channel_id` | `0` | Where reports are posted (`0` disables reports) |
 | `reports.enabled`, `monthly`, `timezone`, `hour`, `minute` | on, on, `Asia/Ho_Chi_Minh`, `23`, `59` | Report schedule |
+| `highlights.enabled` | `true` | Streak, milestone and nemesis lines under each scoreboard |
 | `llm.*` | disabled | See below |
 
 Secrets are read only from the environment or the dotenv file you pass with `--env-file`: `RIOT_API_KEY`, `DISCORD_TOKEN` and, optionally, `LLM_API_KEY`.

@@ -1,5 +1,5 @@
 //! Daily, weekly and monthly reports: one data model, rendered as a card image or as text.
-use crate::{App, i18n::{Lang, Msg}, model::{Match, Notice, Rank, now}, presentation::plain};
+use crate::{App, highlights::{self, Matchup, Matchups, Streak}, i18n::{Lang, Msg}, model::{Match, Notice, Rank, now}, presentation::plain};
 use anyhow::Result;
 use chrono::{Datelike, TimeZone, Timelike};
 use serde::{Deserialize, Serialize};
@@ -64,10 +64,19 @@ pub struct PlayerLine {
     /// Most played first, at most three.
     pub champions: Vec<(String, i64)>,
     pub ranks: Vec<RankLine>,
+    /// Monthly only: the longest ranked win streak inside the window.
+    #[serde(default)]
+    pub best_streak: i64,
+    /// Monthly only: the enemy champion with the worst and the best record against this player.
+    #[serde(default)]
+    pub nemesis: Option<Matchup>,
+    #[serde(default)]
+    pub victim: Option<Matchup>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RankLine { pub queue: u16, pub games: i64, pub wins: i64, pub delta: Option<i64>, pub rank: Option<Rank> }
-pub struct Award { pub title: Msg, pub player: usize, pub value: String, pub negative: bool }
+/// `champion` replaces the player's portrait when the award is about an enemy champion.
+pub struct Award { pub title: Msg, pub player: usize, pub value: String, pub negative: bool, pub champion: Option<String> }
 
 /// Monthly MVP: the highest group-relative rating among players with a real sample.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -75,6 +84,9 @@ pub struct Mvp { pub player: usize, pub rating: f64 }
 /// A player needs this many games, and at least a fifth of the busiest player's games, to be MVP.
 const MVP_MIN_GAMES: i64 = 10;
 const MVP_SHARE: i64 = 5;
+/// Monthly honours: the shortest win streak, and the fewest games against one champion, that count.
+const MONTH_STREAK: i64 = 3;
+const MONTH_MATCHUP_GAMES: i64 = 3;
 
 impl PlayerLine {
     /// Sum of known per-queue LP changes; `None` when no change is known.
@@ -129,8 +141,28 @@ impl Report {
                 Msg::AwVision => lang.f(Msg::VisionPerMin, &[&format!("{:.2}", p.vision_per_min())]),
                 _ => lang.f(Msg::FmtWinRate, &[&format!("{:.0}", p.win_rate()), &p.games]),
             };
-            Some(Award { title, player: index, value, negative })
-        }).collect()
+            Some(Award { title, player: index, value, negative, champion: None })
+        }).collect::<Vec<_>>().into_iter().chain(self.matchup_awards(lang)).collect()
+    }
+    /// Monthly streak, nemesis and victim honours, for players with enough games against a champion.
+    fn matchup_awards(&self, lang: Lang) -> Vec<Award> {
+        if self.period != Period::Monthly { return Vec::new(); }
+        let mut out = Vec::new();
+        let players = || self.players.iter().enumerate();
+        if let Some((index, p)) = players().filter(|(_, p)| p.best_streak >= MONTH_STREAK).max_by(|a, b| a.1.best_streak.cmp(&b.1.best_streak).then_with(|| b.1.name.cmp(&a.1.name))) {
+            out.push(Award { title: Msg::AwStreak, player: index, value: lang.f(Msg::FmtStreak, &[&p.best_streak]), negative: false, champion: None });
+        }
+        let pick = |get: fn(&PlayerLine) -> Option<&Matchup>, worst: bool| players().filter_map(|(i, p)| get(p).map(|m| (i, m)))
+            .max_by(|a, b| {
+                let rate = if worst { b.1.rate().total_cmp(&a.1.rate()) } else { a.1.rate().total_cmp(&b.1.rate()) };
+                rate.then(a.1.games.cmp(&b.1.games)).then_with(|| self.players[b.0].name.cmp(&self.players[a.0].name))
+            });
+        for (title, get, worst) in [(Msg::AwNemesis, (|p| p.nemesis.as_ref()) as fn(&PlayerLine) -> Option<&Matchup>, true), (Msg::AwVictim, |p| p.victim.as_ref(), false)] {
+            if let Some((index, m)) = pick(get, worst) {
+                out.push(Award { title, player: index, value: lang.f(Msg::FmtMatchup, &[&m.champion, &m.wins, &m.losses()]), negative: worst, champion: Some(m.champion.clone()) });
+            }
+        }
+        out
     }
     /// The report's month, in the language's month format.
     pub fn month(&self, lang: Lang) -> String { self.local(self.end).format(lang.t(Msg::MonthFormat)).to_string() }
@@ -227,6 +259,10 @@ fn compute_scanned(app: &App, period: Period, start: i64, end: i64, scan: impl F
     let mut stats: BTreeMap<String, PlayerLine> = BTreeMap::new();
     let mut champions: BTreeMap<String, BTreeMap<String, i64>> = BTreeMap::new();
     let mut records: BTreeMap<(String, u16), (i64, i64)> = BTreeMap::new();
+    // Monthly honours only; daily and weekly windows are too short for a matchup to mean anything.
+    let monthly = period == Period::Monthly;
+    let mut streaks: BTreeMap<String, (Streak, i64)> = BTreeMap::new();
+    let mut matchups: BTreeMap<String, Matchups> = BTreeMap::new();
     let mut games = 0;
     scan(&mut |m| {
         if m.remake || m.ended_at <= start || m.ended_at > end { return; }
@@ -243,6 +279,14 @@ fn compute_scanned(app: &App, period: Period, start: i64, end: i64, scan: impl F
             *champions.entry(p.puuid.clone()).or_default().entry(p.champion.clone()).or_default() += 1;
             if matches!(m.queue, 420 | 440) {
                 let row = records.entry((p.puuid.clone(), m.queue)).or_default(); row.0 += 1; row.1 += i64::from(p.win);
+            }
+            if monthly {
+                if highlights::ranked(m) {
+                    let (streak, best) = streaks.entry(p.puuid.clone()).or_default();
+                    streak.push(p.win);
+                    if streak.win { *best = (*best).max(streak.len); }
+                }
+                matchups.entry(p.puuid.clone()).or_default().add(m, p);
             }
         }
     })?;
@@ -262,6 +306,11 @@ fn compute_scanned(app: &App, period: Period, start: i64, end: i64, scan: impl F
         played.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         played.truncate(3);
         line.champions = played;
+        line.best_streak = streaks.get(puuid).map_or(0, |s| s.1);
+        if let Some(row) = matchups.get(puuid) {
+            line.nemesis = row.nemesis(MONTH_MATCHUP_GAMES);
+            line.victim = row.victim(MONTH_MATCHUP_GAMES);
+        }
     }
     let mut players: Vec<PlayerLine> = stats.into_values().collect();
     players.sort_by(|a, b| b.lp().unwrap_or(i64::MIN).cmp(&a.lp().unwrap_or(i64::MIN)).then(b.games.cmp(&a.games)).then_with(|| a.name.cmp(&b.name)));

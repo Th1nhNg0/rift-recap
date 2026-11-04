@@ -1,4 +1,4 @@
-use crate::{App, i18n::{Lang, Msg}, model::{Match, Notice, now}, presentation as view, render, reports, tracker};
+use crate::{App, highlights, i18n::{Lang, Msg}, model::{Match, Notice, now}, presentation as view, render, reports, tracker};
 use anyhow::{Result, bail, ensure};
 use serenity::{all::*, async_trait};
 use std::{fmt, sync::Arc, time::Duration};
@@ -12,6 +12,10 @@ async fn scoreboard_image(app: &App, game: &Match) -> Option<Vec<u8>> {
         Ok(image) => Some(image),
         Err(error) => { warn!(%error, "Scoreboard image unavailable; retaining text scoreboard fallback"); None }
     }
+}
+/// Streak, milestone and nemesis lines for a game; a failure only drops them.
+fn highlight_text(app: &App, game: &Match) -> String {
+    highlights::text(app, game, app.cfg.language).unwrap_or_else(|error| { warn!(%error, "Highlights unavailable"); String::new() })
 }
 fn safe_http<T>(value: serenity::Result<T>) -> Result<T> {
     value.map_err(|error| {
@@ -51,7 +55,7 @@ impl EventHandler for Handler {
                     return;
                 }
                 // Results and ranks are meant for the group (as in the original bot); settings stay private.
-                let public = matches!(cmd.data.name.as_str(), "lastgame" | "rank" | "version");
+                let public = matches!(cmd.data.name.as_str(), "lastgame" | "rank" | "version" | "nemesis");
                 let deferred = if public { cmd.defer(&ctx.http).await } else { cmd.defer_ephemeral(&ctx.http).await };
                 if deferred.is_err() { return; }
                 let Ok(_slot) = self.slots.try_acquire() else {
@@ -65,9 +69,10 @@ impl EventHandler for Handler {
             }
             Interaction::Autocomplete(cmd) => {
                 if cmd.guild_id.map(|g| g.get()) != Some(self.app.cfg.discord.guild_id) { return; }
-                let admin = cmd.member.as_ref().and_then(|m| m.permissions).is_some_and(|p| p.administrator());
+                // Removing players is for administrators; naming one in /nemesis is for everyone.
+                let allowed = cmd.data.name == "nemesis" || cmd.member.as_ref().and_then(|m| m.permissions).is_some_and(|p| p.administrator());
                 let mut response = CreateAutocompleteResponse::new();
-                if let (true, Some(focused)) = (admin, cmd.data.autocomplete()) {
+                if let (true, Some(focused)) = (allowed, cmd.data.autocomplete()) {
                     let query = focused.value.to_lowercase();
                     for id in self.app.store.players().unwrap_or_default().iter().map(|p| p.riot_id()).filter(|id| id.to_lowercase().contains(&query)).take(25) {
                         response = response.add_string_choice(id.clone(), id);
@@ -113,12 +118,29 @@ impl Handler {
                 };
                 // Commentary is optional; the text summary only stands in when the image could not be drawn.
                 let text = if text.is_empty() && image.is_none() { view::commentary(&game, lang) } else { text };
+                let text = highlights::join(&text, &highlight_text(&self.app, &game));
                 Ok(Reply { text, file: image.map(|data| (format!("scoreboard.{}", render::IMAGE_EXT), data)) })
             }
             "players" => {
                 let players = self.app.store.players()?;
                 let lines: Vec<String> = players.iter().enumerate().map(|(i, p)| format!("{}. {} · {}", i + 1, view::plain(p.name()), view::plain(&p.riot_id()))).collect();
                 Ok(Reply::text(format!("{}\n{}", lang.f(Msg::RosterTitle, &[&players.len()]), lines.join("\n"))))
+            }
+            "nemesis" => {
+                let wanted = str_opt(opts, "player").map(|w| w.trim().to_lowercase());
+                let roster: Vec<_> = self.app.store.players()?.into_iter().filter(|p| !p.puuid.is_empty())
+                    .filter(|p| wanted.as_ref().is_none_or(|w| p.riot_id().to_lowercase() == *w || p.name().to_lowercase() == *w)).collect();
+                if roster.is_empty() { return Err(deny(lang.t(Msg::PlayerNotTracked))); }
+                let matchups = highlights::matchups(&self.app)?;
+                let mut lines = vec![lang.f(Msg::NemesisTitle, &[&NEMESIS_GAMES, &self.app.cfg.retention_days])];
+                for player in roster {
+                    let row = matchups.get(&player.puuid);
+                    let worst: Vec<String> = row.map(|m| m.worst(NEMESIS_GAMES)).unwrap_or_default().into_iter().filter(|m| m.rate() < 50.0).take(3).map(|m| m.label()).collect();
+                    let mut text = if worst.is_empty() { lang.t(Msg::NemesisNone).to_owned() } else { worst.join(" · ") };
+                    if let Some(victim) = row.and_then(|m| m.victim(NEMESIS_GAMES)) { text = format!("{text} | {}", lang.f(Msg::NemesisVictim, &[&victim.label()])); }
+                    lines.push(format!("**{}** — {text}", view::plain(player.name())));
+                }
+                Ok(Reply::text(lines.join("\n")))
             }
             "version" => Ok(Reply::text(format!("rift-recap v{}", env!("CARGO_PKG_VERSION")))),
             "rank" => {
@@ -205,6 +227,8 @@ impl Handler {
         }
     }
 }
+/// Games against a champion before `/nemesis` lists it.
+const NEMESIS_GAMES: i64 = 5;
 fn str_opt<'a>(opts: &'a [CommandDataOption], name: &str) -> Option<&'a str> {
     opts.iter().find(|o| o.name == name).and_then(|o| if let CommandDataOptionValue::String(s) = &o.value { Some(s.as_str()) } else { None })
 }
@@ -278,7 +302,8 @@ pub async fn register(http: &Http, guild: u64) -> Result<()> {
         .add_option(option(SubCommand, "addplayer", Msg::CmdAddplayer).add_sub_option(riot_id()).add_sub_option(option(Text, "nickname", Msg::OptNickname).max_length(64)))
         .add_option(option(SubCommand, "removeplayer", Msg::CmdRemoveplayer).add_sub_option(riot_id().set_autocomplete(true)))
         .add_option(option(SubCommand, "rankreport", Msg::CmdRankreport).add_sub_option(period));
-    for command in [command("lastgame", Msg::CmdLastgame), command("rank", Msg::CmdRank), command("players", Msg::CmdPlayers), command("version", Msg::CmdVersion), config] {
+    let nemesis = command("nemesis", Msg::CmdNemesis).add_option(option(Text, "player", Msg::OptPlayer).max_length(90).set_autocomplete(true));
+    for command in [command("lastgame", Msg::CmdLastgame), command("rank", Msg::CmdRank), command("players", Msg::CmdPlayers), command("version", Msg::CmdVersion), nemesis, config] {
         safe_http(GuildId::new(guild).create_command(http, command).await)?;
     }
     info!("Guild tracker commands installed; unrelated commands were not cleared");
@@ -301,10 +326,15 @@ async fn deliver(app: &App, http: &Http, delivery: &crate::store::Delivery) -> R
         Notice::Result(m) => {
             let channel = app.channel(false)?; ensure!(channel != 0, "Game channel missing");
             // The result is the image; commentary joins it later. Text stands in only when the image failed.
+            // Highlights ride along as the message text and stay when the commentary is added.
             let mut create = CreateMessage::new().allowed_mentions(mentions());
+            let highlights = highlight_text(app, m);
             match scoreboard_image(app, m).await {
-                Some(image) => create = create.add_file(CreateAttachment::bytes(image, format!("scoreboard.{}", render::IMAGE_EXT))),
-                None => create = create.content(view::commentary(m, lang)),
+                Some(image) => {
+                    create = create.add_file(CreateAttachment::bytes(image, format!("scoreboard.{}", render::IMAGE_EXT)));
+                    if !highlights.is_empty() { create = create.content(highlights); }
+                }
+                None => create = create.content(highlights::join(&view::commentary(m, lang), &highlights)),
             }
             let message = safe_http(ChannelId::new(channel).send_message(http, create).await)?;
             app.store.ack(delivery.id, Some((&m.id, channel, message.id.get())))?;
@@ -335,7 +365,8 @@ async fn deliver(app: &App, http: &Http, delivery: &crate::store::Delivery) -> R
 async fn ai_text(app: &App, game: &Match) -> Result<String> {
     let llm = app.llm.as_ref().ok_or_else(|| anyhow::anyhow!("LLM is not enabled"))?;
     let recent = app.store.recent_commentary(&game.id, 6)?;
-    Ok(view::limit(&llm.enhance(game, app.cfg.language, &recent).await?, 2000))
+    let highlights: Vec<String> = highlight_text(app, game).lines().map(str::to_owned).collect();
+    Ok(view::limit(&llm.enhance(game, app.cfg.language, &recent, &highlights).await?, 2000))
 }
 
 pub async fn commentary_worker(app: Arc<App>, http: Arc<Http>) -> Result<()> {
@@ -347,7 +378,8 @@ pub async fn commentary_worker(app: Arc<App>, http: Arc<Http>) -> Result<()> {
             if let Ok(text) = text {
                 if let Some((channel, message)) = app.store.message(&game.id)? {
                     // Only content changes; the scoreboard image stays attached.
-                    if ChannelId::new(channel).edit_message(&http, MessageId::new(message), EditMessage::new().content(&text).allowed_mentions(mentions())).await.is_ok() {
+                    let content = highlights::join(&text, &highlight_text(&app, &game));
+                    if ChannelId::new(channel).edit_message(&http, MessageId::new(message), EditMessage::new().content(&content).allowed_mentions(mentions())).await.is_ok() {
                         app.store.commentary_done(&game.id, Some(&text))?;
                     } else { app.store.commentary_done(&game.id, None)?; warn!("Optional commentary edit failed; factual result retained"); }
                 } else { app.store.commentary_done(&game.id, None)?; }
@@ -397,11 +429,11 @@ mod tests {
 
     #[test]
     fn command_visibility_matches_specification() {
-        for public in ["lastgame", "rank", "version"] {
-            assert!(matches!(public, "lastgame" | "rank" | "version"), "{public} should be public");
+        for public in ["lastgame", "rank", "version", "nemesis"] {
+            assert!(matches!(public, "lastgame" | "rank" | "version" | "nemesis"), "{public} should be public");
         }
         for private in ["players", "config"] {
-            assert!(!matches!(private, "lastgame" | "rank" | "version"), "{private} should be private");
+            assert!(!matches!(private, "lastgame" | "rank" | "version" | "nemesis"), "{private} should be private");
         }
     }
 }

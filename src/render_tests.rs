@@ -56,6 +56,7 @@ fn line(name: &str, games: i64, wins: i64, delta: Option<i64>) -> PlayerLine {
     PlayerLine {
         name: name.into(), games, wins, kills: games * 7, deaths: games * 5, assists: games * 9, cs: games * 180, damage: games * 21_000, vision: games * 30, minutes: games as f64 * 30.0,
         champions: vec![("Ahri".into(), games)], ranks: vec![RankLine { queue: 440, games, wins, delta, rank: rank("EMERALD", "I", 35) }],
+        ..Default::default()
     }
 }
 
@@ -80,6 +81,14 @@ fn monthly_report_adds_an_mvp_band() {
     let monthly = Report { period: Period::Monthly, ..weekly.clone() };
     let image = |report: &Report| { let bytes = report_card::card(report, Lang::En, &art).expect("report card"); assert_webp(&bytes); webp::Decoder::new(&bytes).decode().expect("valid WebP").height() };
     assert_eq!(image(&monthly), image(&weekly) + 2 * 96, "the monthly card grows by the 96 px MVP band");
+    // Streak, nemesis and victim honours fill a third row of tiles.
+    let mut players = monthly.players.clone();
+    players[0].best_streak = 6;
+    players[1].nemesis = Some(crate::highlights::Matchup { champion: "Zed".into(), games: 5, wins: 1 });
+    players[0].victim = Some(crate::highlights::Matchup { champion: "Lux".into(), games: 4, wins: 4 });
+    let honours = Report { players, ..monthly.clone() };
+    assert_eq!(honours.awards(Lang::En).len(), 9);
+    assert_eq!(image(&honours), image(&monthly) + 2 * 64, "nine honours take three 64 px rows");
 }
 
 
