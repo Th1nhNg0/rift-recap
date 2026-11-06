@@ -31,6 +31,8 @@ impl Store {
             CREATE TABLE IF NOT EXISTS ranks(puuid TEXT,queue INTEGER,at INTEGER,data TEXT NOT NULL,PRIMARY KEY(puuid,queue,at));
             CREATE TABLE IF NOT EXISTS raw_matches(id TEXT PRIMARY KEY,ended_at INTEGER NOT NULL,data BLOB NOT NULL);
             CREATE INDEX IF NOT EXISTS raw_matches_time ON raw_matches(ended_at);
+            CREATE TABLE IF NOT EXISTS raw_timelines(id TEXT PRIMARY KEY,ended_at INTEGER NOT NULL,data BLOB NOT NULL);
+            CREATE INDEX IF NOT EXISTS raw_timelines_time ON raw_timelines(ended_at);
             DROP TABLE IF EXISTS pending;
             CREATE TABLE IF NOT EXISTS outbox(id INTEGER PRIMARY KEY,unique_key TEXT UNIQUE,at INTEGER NOT NULL,data TEXT NOT NULL,retry_at INTEGER NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS messages(game_id TEXT PRIMARY KEY,channel_id TEXT NOT NULL,message_id TEXT NOT NULL,finished INTEGER NOT NULL,at INTEGER NOT NULL);
@@ -149,19 +151,45 @@ impl Store {
     /// features can derive new statistics without refetching or a schema migration. Best effort:
     /// a game nobody tracks has no row in `matches`, and its payload is dropped.
     pub fn save_raw(&self, m: &Match, raw: &Value) -> Result<()> {
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(&serde_json::to_vec(raw)?)?;
-        let blob = encoder.finish()?;
-        self.db()?.execute("INSERT OR REPLACE INTO raw_matches(id,ended_at,data) SELECT id,ended_at,? FROM matches WHERE id=?", params![blob, m.id])?;
+        self.db()?.execute("INSERT OR REPLACE INTO raw_matches(id,ended_at,data) SELECT id,ended_at,? FROM matches WHERE id=?", params![gzip(raw)?, m.id])?;
         Ok(())
     }
     /// The stored Riot payload for one match, or `None` when it was never kept.
     pub fn raw_match(&self, id: &str) -> Result<Option<Value>> {
         let row: Option<Vec<u8>> = self.db()?.query_row("SELECT data FROM raw_matches WHERE id=?", [id], |r| r.get(0)).optional()?;
-        let Some(blob) = row else { return Ok(None) };
-        let mut text = Vec::new();
-        GzDecoder::new(blob.as_slice()).read_to_end(&mut text)?;
-        Ok(Some(serde_json::from_slice(&text).map_err(|_| anyhow::anyhow!("Invalid stored match payload"))?))
+        row.map(|blob| gunzip(&blob)).transpose()
+    }
+    /// Archive an old game without announcing it: no outbox entry, no commentary, no Discord post.
+    /// Returns whether the match was new. A game already stored keeps its row and only gains the raw payload.
+    pub fn import(&self, m: &Match, raw: &Value) -> Result<bool> {
+        let blob = gzip(raw)?;
+        let mut db = self.db()?; let tx = db.transaction()?;
+        tx.execute("INSERT OR IGNORE INTO seen VALUES(?,?)", params![m.id, now()])?;
+        let inserted = tx.execute("INSERT OR IGNORE INTO matches(id,ended_at,data,commented) VALUES(?,?,?,1)", params![m.id, m.ended_at, encode(m)?])?;
+        tx.execute("INSERT OR REPLACE INTO raw_matches(id,ended_at,data) SELECT id,ended_at,? FROM matches WHERE id=?", params![blob, m.id])?;
+        tx.commit()?;
+        Ok(inserted > 0)
+    }
+    /// Which parts of one game are archived: (match, raw payload, timeline).
+    pub fn archived(&self, id: &str) -> Result<(bool, bool, bool)> {
+        Ok(self.db()?.query_row("SELECT EXISTS(SELECT 1 FROM matches WHERE id=?1),EXISTS(SELECT 1 FROM raw_matches WHERE id=?1),EXISTS(SELECT 1 FROM raw_timelines WHERE id=?1)", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?)
+    }
+    /// Keep the Riot timeline of a stored match; ignored for matches the store never accepted.
+    pub fn save_timeline(&self, id: &str, raw: &Value) -> Result<()> {
+        self.db()?.execute("INSERT OR REPLACE INTO raw_timelines(id,ended_at,data) SELECT id,ended_at,? FROM matches WHERE id=?", params![gzip(raw)?, id])?;
+        Ok(())
+    }
+    /// The stored Riot timeline for one match, or `None` when it was never kept.
+    pub fn timeline(&self, id: &str) -> Result<Option<Value>> {
+        let row: Option<Vec<u8>> = self.db()?.query_row("SELECT data FROM raw_timelines WHERE id=?", [id], |r| r.get(0)).optional()?;
+        row.map(|blob| gunzip(&blob)).transpose()
+    }
+    /// Stored matches that ended at or after `since` but have no timeline yet, oldest first.
+    pub fn missing_timelines(&self, since: i64) -> Result<Vec<String>> {
+        let db = self.db()?;
+        let mut stmt = db.prepare("SELECT id FROM matches WHERE ended_at>=? AND id NOT IN(SELECT id FROM raw_timelines) ORDER BY ended_at")?;
+        let ids = stmt.query_map([since], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(ids)
     }
     /// Silently drop a game that no longer concerns any tracked player.
     pub fn discard(&self, id: &str) -> Result<()> {
@@ -252,6 +280,7 @@ impl Store {
         tx.execute("DELETE FROM matches WHERE ended_at<? AND NOT EXISTS(SELECT 1 FROM outbox WHERE unique_key='result/' || matches.id)", [cutoff])?;
         // Raw payloads follow the same retention as the matches they belong to.
         tx.execute("DELETE FROM raw_matches WHERE ended_at<? OR id NOT IN(SELECT id FROM matches)", [cutoff])?;
+        tx.execute("DELETE FROM raw_timelines WHERE ended_at<? OR id NOT IN(SELECT id FROM matches)", [cutoff])?;
         tx.execute("DELETE FROM ranks WHERE at<? AND (puuid,queue,at) NOT IN (SELECT puuid,queue,MAX(at) FROM ranks GROUP BY puuid,queue)", [cutoff])?;
         tx.execute("DELETE FROM baseline WHERE at<?", [cutoff])?;
         tx.execute("DELETE FROM seen WHERE at<? AND NOT EXISTS(SELECT 1 FROM outbox WHERE unique_key='result/' || seen.id)", [cutoff])?;
@@ -264,6 +293,16 @@ impl Store {
 }
 fn encode<T: Serialize>(value: &T) -> Result<String> { Ok(serde_json::to_string(value)?) }
 fn decode<T: DeserializeOwned>(text: &str) -> Result<T> { serde_json::from_str(text).map_err(|_| anyhow::anyhow!("Invalid stored data")) }
+fn gzip(value: &Value) -> Result<Vec<u8>> {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&serde_json::to_vec(value)?)?;
+    Ok(encoder.finish()?)
+}
+fn gunzip(blob: &[u8]) -> Result<Value> {
+    let mut text = Vec::new();
+    GzDecoder::new(blob).read_to_end(&mut text)?;
+    serde_json::from_slice(&text).map_err(|_| anyhow::anyhow!("Invalid stored Riot payload"))
+}
 
 #[cfg(test)]
 mod tests {
@@ -338,6 +377,39 @@ mod tests {
         store.save_raw(&game, &raw)?;
         assert_eq!(store.raw_match(&game.id)?.unwrap(), raw);
         assert!(store.raw_match("MISSING")?.is_none());
+        Ok(())
+    }
+    #[test]
+    fn import_archives_quietly_and_is_idempotent() -> Result<()> {
+        let store = Store::open(Path::new(":memory:"))?;
+        let game = Match { id: "TEST_OLD".into(), ended_at: now() - 90 * 86400, duration: 1800, ..Default::default() };
+        let raw = serde_json::json!({"metadata":{"matchId":"TEST_OLD"}});
+        assert_eq!(store.archived(&game.id)?, (false, false, false));
+        assert!(store.import(&game, &raw)?);
+        assert!(!store.import(&game, &raw)?);
+        assert_eq!(store.archived(&game.id)?, (true, true, false));
+        assert!(store.seen(&game.id)?);
+        // Nothing to post, and nothing for the commentary worker.
+        assert!(store.next_delivery()?.is_none());
+        assert!(store.next_commentary()?.is_none());
+        assert_eq!(store.matches(game.ended_at - 1, game.ended_at)?.len(), 1);
+        store.save_timeline(&game.id, &raw)?;
+        assert_eq!(store.archived(&game.id)?, (true, true, true));
+        Ok(())
+    }
+    #[test]
+    fn timelines_are_kept_for_stored_matches_and_tracked_until_saved() -> Result<()> {
+        let store = Store::open(Path::new(":memory:"))?;
+        let game = Match { id: "TEST_TL".into(), ended_at: now(), duration: 1800, ..Default::default() };
+        let timeline = serde_json::json!({"metadata":{"matchId":"TEST_TL"},"info":{"frameInterval":60000,"frames":[{"timestamp":0,"events":[]}]}});
+        store.save_timeline(&game.id, &timeline)?;
+        assert!(store.timeline(&game.id)?.is_none());
+        store.finish(&game)?;
+        assert_eq!(store.missing_timelines(game.ended_at - 60)?, [game.id.as_str()]);
+        assert!(store.missing_timelines(game.ended_at + 1)?.is_empty());
+        store.save_timeline(&game.id, &timeline)?;
+        assert_eq!(store.timeline(&game.id)?.unwrap(), timeline);
+        assert!(store.missing_timelines(0)?.is_empty());
         Ok(())
     }
     #[test]

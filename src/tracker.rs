@@ -129,6 +129,19 @@ impl Tracker {
             // The untouched payload is the long-term record; keep it only for matches the store accepted.
             else if let Err(error) = self.app.store.save_raw(&m, &raw) { warn!(%error, "Storing the raw match payload failed"); }
         }
+        self.timelines().await
+    }
+    /// Fetch timelines for recently stored games after their results are queued, so posting is never delayed.
+    /// A failed fetch is retried on later sweeps until the game leaves the catch-up window.
+    async fn timelines(&self) -> Result<()> {
+        let since = now() - i64::from(self.app.cfg.riot.catch_up_hours) * 3600;
+        for id in self.app.store.missing_timelines(since)? {
+            match self.app.riot.timeline(&id).await {
+                Ok(Some(value)) => if let Err(error) = self.app.store.save_timeline(&id, &value) { warn!(%error, "Storing a match timeline failed"); },
+                Ok(None) => (),
+                Err(error) => { warn!(%error, "Timeline retrieval failed; will retry"); break; }
+            }
+        }
         Ok(())
     }
     async fn finish(&self, mut m: Match) -> Result<()> {

@@ -1,3 +1,4 @@
+mod backfill;
 mod config;
 mod discord;
 mod highlights;
@@ -77,6 +78,16 @@ enum Mode {
     CommentaryContext {
         #[arg(long)]
         match_id: Option<String>,
+    },
+    /// Quietly archive older roster games (match, raw payload, timeline) without posting anything.
+    /// Resumable; games inside the live catch-up window are left to the tracker.
+    Backfill {
+        /// First day to archive, YYYY-MM-DD in the reports timezone.
+        #[arg(long)]
+        since: String,
+        /// Spacing between Riot requests; slower than the tracker so both can share one API key.
+        #[arg(long, default_value_t = 2500)]
+        interval_ms: u64,
     },
     /// Run tracking. Discord sends are enabled unless --no-discord is supplied.
     Run {
@@ -191,6 +202,14 @@ async fn execute() -> Result<()> {
             let recent = app.store.recent_commentary(&game.id, 6)?;
             let highlights: Vec<String> = highlights::text(&app, &game, app.cfg.language)?.lines().map(str::to_owned).collect();
             println!("{}", llm::context(&game, app.cfg.llm.send_names, &recent, &highlights));
+            Ok(())
+        }
+        Mode::Backfill { since, interval_ms } => {
+            let start = backfill::day_start(&app, &since)?;
+            ensure!(start >= crate::model::now() - i64::from(app.cfg.retention_days) * 86400, "--since is older than retention_days; the next prune would delete those games");
+            let riot = riot::Riot::new(&secrets.riot, &app.cfg.riot.platform, interval_ms.max(100))?;
+            let summary = backfill::run(&app, &riot, start).await?;
+            info!(found = summary.found, imported = summary.imported, completed = summary.completed, skipped = summary.skipped, timelines = summary.timelines, "Backfill finished");
             Ok(())
         }
         Mode::Run { no_discord, once, register_commands } => {

@@ -191,7 +191,7 @@ Relative paths are resolved against the config file's directory. Unknown keys ar
 | `language` | `vi` | `vi` or `en` for all bot output |
 | `players_file` | `players.json` | Seed roster for a new database |
 | `database` | `data/tracker.db` | SQLite file |
-| `retention_days` | `180` | How long old matches and snapshots are kept |
+| `retention_days` | `730` | How long old matches, raw payloads, timelines and snapshots are kept (two years) |
 | `riot.platform` | `vn2` | Riot platform routing value |
 | `riot.history_interval_secs` | `60` | Seconds between match-history sweeps |
 | `riot.catch_up_hours` | `3` | Oldest game that is still announced after downtime |
@@ -256,7 +256,7 @@ Tag a release (`git tag v0.3.0 && git push origin v0.3.0`) and GitHub builds, te
 
 State lives in one SQLite file in WAL mode. To back it up, stop the service or use SQLite's `.backup`. Pending Discord posts are kept in the database and retried, so a restart or an outage loses nothing.
 
-Besides the normalized match, the untouched Riot payload of every stored game is kept gzipped in the same database (`raw_matches`, pruned with `retention_days`), so new statistics can be derived later without refetching or a schema migration.
+Besides the normalized match, the untouched Riot payload of every stored game is kept gzipped in the same database (`raw_matches`, pruned with `retention_days`), so new statistics can be derived later without refetching or a schema migration. The match timeline (per-minute frames and events such as kills, objectives and item purchases) is kept the same way in `raw_timelines`: it costs one extra Riot request per game, is fetched after the result is queued, and is retried on later sweeps while the game is within `catch_up_hours`.
 
 ## How it works
 
@@ -297,6 +297,8 @@ cargo test --locked                       # offline; layouts are smoke-tested
 ```
 
 `render-scoreboard` draws a stored or recent real match to a WebP (add `--post` to also send it to the games channel). `render-report` writes `<stem>-<period>.webp` and a matching `.txt` for a daily, weekly or monthly report — the monthly one includes the MVP band — and `--language all` writes one pair per language. Neither imports matches, touches baselines or calls an LLM.
+
+`backfill --since 2026-01-01` quietly archives every older roster game since that day (in the reports timezone): the match, the raw Riot payload and the timeline. Nothing is posted, commented or added to the outbox, and games inside `catch_up_hours` are left to the running tracker, so it can run next to the bot. It spaces Riot requests by `--interval-ms` (default 2500, slower than the tracker so both fit one API key), waits out rate limits, and can be stopped and run again to resume. `--since` must be within `retention_days`.
 
 | Path | Role |
 |---|---|

@@ -73,7 +73,7 @@ pub struct Secrets {
 }
 impl Default for Config {
     fn default() -> Self {
-        Self { players_file: "players.json".into(), database: "data/tracker.db".into(), language: Lang::Vi, retention_days: 180,
+        Self { players_file: "players.json".into(), database: "data/tracker.db".into(), language: Lang::Vi, retention_days: 730,
             riot: Riot::default(), discord: Discord::default(), reports: Reports::default(), llm: Llm::default(), highlights: Highlights::default() }
     }
 }

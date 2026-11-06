@@ -1,6 +1,6 @@
 [package]
 name = "rift-recap"
-version = "0.6.1"
+version = "0.7.0"
 edition = "2024"
 license = "MIT"
 description = "Self-hosted Discord bot that posts a scoreboard after every League of Legends game your squad plays, plus daily, weekly and monthly LP recaps"

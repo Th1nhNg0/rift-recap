@@ -2,7 +2,7 @@
 players_file = "players.json" # Seeds a NEW database once; afterwards /config addplayer|removeplayer is authoritative.
 database = "data/tracker.db"
 language = "vi" # vi or en
-retention_days = 180
+retention_days = 730
 
 [riot]
 platform = "vn2"

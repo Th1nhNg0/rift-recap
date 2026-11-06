@@ -76,8 +76,18 @@ impl Riot {
         let value = self.get(&self.region, &["lol", "match", "v5", "matches", "by-puuid", puuid, "ids"], &[("startTime", start.to_string()), ("count", count.to_string())], false).await?;
         serde_json::from_value(value.unwrap_or(Value::Null)).map_err(|_| anyhow::anyhow!("Invalid match history"))
     }
+    /// One page (up to 100, newest first) of match IDs between `start` and `end` (Unix seconds), skipping `offset` IDs.
+    pub async fn history_between(&self, puuid: &str, start: i64, end: i64, offset: u32) -> Result<Vec<String>> {
+        let query = [("startTime", start.to_string()), ("endTime", end.to_string()), ("start", offset.to_string()), ("count", "100".to_string())];
+        let value = self.get(&self.region, &["lol", "match", "v5", "matches", "by-puuid", puuid, "ids"], &query, false).await?;
+        serde_json::from_value(value.unwrap_or(Value::Null)).map_err(|_| anyhow::anyhow!("Invalid match history"))
+    }
     pub async fn match_data(&self, id: &str) -> Result<Option<Value>> {
         self.get(&self.region, &["lol", "match", "v5", "matches", id], &[], true).await
+    }
+    /// The frame-by-frame timeline (positions, gold, events per minute) of one match.
+    pub async fn timeline(&self, id: &str) -> Result<Option<Value>> {
+        self.get(&self.region, &["lol", "match", "v5", "matches", id, "timeline"], &[], true).await
     }
     pub async fn ranks(&self, puuid: &str) -> Result<Vec<Rank>> {
         let value = self.get(&self.platform, &["lol", "league", "v4", "entries", "by-puuid", puuid], &[], false).await?;
